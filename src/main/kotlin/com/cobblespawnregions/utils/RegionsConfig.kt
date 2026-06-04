@@ -129,7 +129,7 @@ data class PokemonSpawnEntry(
 
 
 data class RegionData(
-    override val version: String = "1.0.2",
+    override val version: String = "1.0.3",
     override val configId: String = "cobblespawnregions",
     val regionId: String = "",
     var regionName: String = "unnamed_region",
@@ -144,9 +144,6 @@ data class RegionData(
     var spawnAmountPerSpawn: Int = 1,
     var requirePlayerInRange: Boolean = false,
     var playerActivationRange: Double = 64.0,
-    var forceChunkLoading: Boolean = false,
-    var chunkLoadRadius: Int = 1,
-    var maxForceLoadedChunks: Int = 25,
     var selectedPokemon: MutableList<PokemonSpawnEntry> = mutableListOf(),
 
     var spawnRestrictions: RegionRestrictionConfig = RegionRestrictionConfig(),
@@ -155,7 +152,7 @@ data class RegionData(
 ) : ConfigData
 
 data class RegionsMainConfig(
-    override val version: String = "1.0.2",
+    override val version: String = "1.0.3",
     override val configId: String = "cobblespawnregions",
     var debugEnabled: Boolean = false,
     var showUnimplementedPokemonInGui: Boolean = false,
@@ -186,12 +183,12 @@ fun defaultCommandPermissions(): Map<String, String> = linkedMapOf(
     "clone" to "cobblespawnregions.command.clone",
     "setspawnamount" to "cobblespawnregions.command.setspawnamount",
     "playeractivation" to "cobblespawnregions.command.playeractivation",
-    "forcechunks" to "cobblespawnregions.command.forcechunks",
     "priority" to "cobblespawnregions.command.priority",
     "gui" to "cobblespawnregions.command.gui",
     "check" to "cobblespawnregions.command.check",
     "editgui" to "cobblespawnregions.command.editgui",
     "reload" to "cobblespawnregions.command.reload",
+    "migratecobblespawners" to "cobblespawnregions.command.migratecobblespawners",
     "region" to "cobblespawnregions.command.region",
     "region.create" to "cobblespawnregions.command.region.create",
     "region.list" to "cobblespawnregions.command.region.list",
@@ -210,7 +207,7 @@ object RegionsConfig {
 
     private val logger = LoggerFactory.getLogger("RegionsConfig")
     private const val MOD_ID = "cobblespawnregions"
-    private const val CURRENT_VERSION = "1.0.2"
+    private const val CURRENT_VERSION = "1.0.3"
 
     private val modConfigDir = File("config/cobblespawnregions")
     private val regionsDir = File(modConfigDir, "regions")
@@ -569,8 +566,6 @@ object RegionsConfig {
         if (region.spawnRestrictions == null) region.spawnRestrictions = RegionRestrictionConfig()
         if (region.spawnAmountPerSpawn <= 0) region.spawnAmountPerSpawn = 1
         if (region.playerActivationRange < 0.0) region.playerActivationRange = 64.0
-        if (region.chunkLoadRadius <= 0) region.chunkLoadRadius = 1
-        if (region.maxForceLoadedChunks <= 0) region.maxForceLoadedChunks = 25
         normalizeRestrictions(region.spawnRestrictions)
         region.selectedPokemon.forEach(::normalizePokemonEntry)
     }

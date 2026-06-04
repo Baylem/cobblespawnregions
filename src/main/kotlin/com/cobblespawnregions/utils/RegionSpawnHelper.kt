@@ -72,6 +72,7 @@ object RegionSpawnHelper {
         if (respectTimer && !isSpawnReady(region)) return emptyList()
         if (region.selectedPokemon.isEmpty()) return emptyList()
 
+        RegionEntityTracker.rebuildFromWorld(world, regionId, regionBoundingBox(region))
 
         if (region.maxTotalSpawns > 0) {
             val liveTotal = RegionEntityTracker.countTotal(regionId)

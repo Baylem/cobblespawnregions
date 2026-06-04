@@ -21,6 +21,7 @@ import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
 import net.minecraft.util.Identifier
+import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Box
 import net.minecraft.world.Heightmap
 import org.slf4j.LoggerFactory
@@ -74,6 +75,21 @@ object RegionCommands {
                     1
                 }
             }
+
+            subcommand("migratecobblespawners", permission = permission("migratecobblespawners")) {
+                executes { ctx ->
+                    val result = Migrations.migrateCobbleSpawnersToRegions()
+                    if (result.migrated > 0) {
+                        RegionsConfig.reloadBlocking()
+                        SpawnPointStore.clearAll()
+                        SpawnPointScanner.enqueueAllLoadedChunks(ctx.source.server)
+                    }
+                    val color = if (result.failed == 0) "§a" else "§c"
+                    ctx.source.sendMessage(Text.literal("$color[CSR] §f${result.message}"))
+                    if (result.failed == 0) 1 else 0
+                }
+            }
+
         }
 
         manager.register()
@@ -247,49 +263,6 @@ object RegionCommands {
             )
         }
 
-        subcommand("forcechunks", permission = permission("forcechunks")) {
-            then(regionIdArg()
-                .then(RequiredArgumentBuilder.argument<ServerCommandSource, String>("enabled", StringArgumentType.word())
-                    .suggests { _, builder ->
-                        builder.suggest("true")
-                        builder.suggest("false")
-                        builder.buildFuture()
-                    }
-                    .then(RequiredArgumentBuilder.argument<ServerCommandSource, Int>("maxChunks", IntegerArgumentType.integer(1, 256))
-                        .then(RequiredArgumentBuilder.argument<ServerCommandSource, Int>("radius", IntegerArgumentType.integer(1, 32))
-                            .executes { ctx ->
-                                setForceChunks(
-                                    ctx.source,
-                                    StringArgumentType.getString(ctx, "regionId"),
-                                    StringArgumentType.getString(ctx, "enabled"),
-                                    IntegerArgumentType.getInteger(ctx, "maxChunks"),
-                                    IntegerArgumentType.getInteger(ctx, "radius")
-                                )
-                            }
-                        )
-                        .executes { ctx ->
-                            setForceChunks(
-                                ctx.source,
-                                StringArgumentType.getString(ctx, "regionId"),
-                                StringArgumentType.getString(ctx, "enabled"),
-                                IntegerArgumentType.getInteger(ctx, "maxChunks"),
-                                null
-                            )
-                        }
-                    )
-                    .executes { ctx ->
-                        setForceChunks(
-                            ctx.source,
-                            StringArgumentType.getString(ctx, "regionId"),
-                            StringArgumentType.getString(ctx, "enabled"),
-                            null,
-                            null
-                        )
-                    }
-                )
-            )
-        }
-
         subcommand("priority", permission = permission("priority")) {
             then(regionIdArg()
                 .then(RequiredArgumentBuilder.argument<ServerCommandSource, Int>("value", IntegerArgumentType.integer(-1000, 1000))
@@ -401,11 +374,6 @@ object RegionCommands {
     }
 
     private fun deleteRegion(source: ServerCommandSource, regionId: String): Int {
-        RegionsConfig.getRegion(regionId)?.let { region ->
-            worldForRegion(source, region)?.let { world ->
-                CobbleSpawnRegions.setRegionChunkTickets(world, region, enabled = false, respectCap = false)
-            }
-        }
         if (!RegionsConfig.removeRegion(regionId)) {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
@@ -626,7 +594,6 @@ object RegionCommands {
         source.sendMessage(Text.literal("Â§7Custom Pokemon: Â§f${region.selectedPokemon.size} Â§7Timer: Â§f${region.spawnTimerTicks} Â§7Amount: Â§f${region.spawnAmountPerSpawn}"))
         source.sendMessage(Text.literal("Â§7Max Alive: Â§f${region.maxTotalSpawns} Â§7Tracked: Â§f${RegionEntityTracker.countTotal(regionId)}"))
         source.sendMessage(Text.literal("Â§7Require Player: ${flag(region.requirePlayerInRange)} Â§7Range: Â§f${region.playerActivationRange.toInt()}"))
-        source.sendMessage(Text.literal("Â§7Force Chunks: ${flag(region.forceChunkLoading)} Â§7Cap: Â§f${region.maxForceLoadedChunks} Â§7Radius: Â§f${region.chunkLoadRadius}"))
         source.sendMessage(Text.literal("Â§7Natural Disable All: ${flag(region.spawnRestrictions.disableAll)} Â§7Blocked Species: Â§f${region.spawnRestrictions.disallowedSpecies.size}"))
         return 1
     }
@@ -654,9 +621,6 @@ object RegionCommands {
             spawnAmountPerSpawn = sourceRegion.spawnAmountPerSpawn,
             requirePlayerInRange = sourceRegion.requirePlayerInRange,
             playerActivationRange = sourceRegion.playerActivationRange,
-            forceChunkLoading = sourceRegion.forceChunkLoading,
-            chunkLoadRadius = sourceRegion.chunkLoadRadius,
-            maxForceLoadedChunks = sourceRegion.maxForceLoadedChunks,
             selectedPokemon = sourceRegion.selectedPokemon.map(::copyPokemonEntry).toMutableList(),
             spawnRestrictions = RegionRestrictionConfig(
                 disallowedSpecies = sourceRegion.spawnRestrictions.disallowedSpecies.toMutableList(),
@@ -698,41 +662,6 @@ object RegionCommands {
         }
         source.sendMessage(Text.literal(
             "Â§a[CSR] Â§fPlayer activation for Â§e${region.regionName}Â§f: ${flag(region.requirePlayerInRange)} Â§7range Â§f${region.playerActivationRange.toInt()}"
-        ))
-        return 1
-    }
-
-    private fun setForceChunks(
-        source: ServerCommandSource,
-        regionId: String,
-        enabledRaw: String,
-        maxChunks: Int?,
-        radius: Int?
-    ): Int {
-        val enabled = parseBoolean(enabledRaw) ?: run {
-            source.sendError(Text.literal("Use true or false for enabled."))
-            return 0
-        }
-        val oldRegion = RegionsConfig.getRegion(regionId) ?: run {
-            source.sendError(Text.literal("No region found with id '$regionId'."))
-            return 0
-        }
-        val world = worldForRegion(source, oldRegion) ?: return 0
-        CobbleSpawnRegions.setRegionChunkTickets(world, oldRegion, enabled = false, respectCap = false)
-
-        val region = RegionsConfig.updateRegion(regionId) {
-            it.forceChunkLoading = enabled
-            if (maxChunks != null) it.maxForceLoadedChunks = maxChunks
-            if (radius != null) it.chunkLoadRadius = radius
-        } ?: return 0
-        val changed = if (enabled) {
-            CobbleSpawnRegions.setRegionChunkTickets(world, region, enabled = true, respectCap = true)
-        } else {
-            0
-        }
-        source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fForce chunks for Â§e${region.regionName}Â§f: ${flag(region.forceChunkLoading)} " +
-                    "Â§7cap Â§f${region.maxForceLoadedChunks} Â§7radius Â§f${region.chunkLoadRadius} Â§7tickets Â§f$changed"
         ))
         return 1
     }

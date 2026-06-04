@@ -27,7 +27,6 @@ import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.RegistryKeys
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.network.ServerPlayerEntity
-import net.minecraft.server.world.ChunkTicketType
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
 import net.minecraft.util.ActionResult
@@ -38,7 +37,6 @@ import net.minecraft.util.math.ChunkPos
 import net.minecraft.world.World
 import org.slf4j.LoggerFactory
 import java.util.UUID
-import java.util.Comparator
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -60,8 +58,6 @@ object CobbleSpawnRegions : ModInitializer {
 
     private val logger = LoggerFactory.getLogger("cobblespawnregions")
     const val MOD_ID = "cobblespawnregions"
-    val REGION_TICKET_TYPE: ChunkTicketType<String> =
-        ChunkTicketType.create("cobblespawnregions:region_ticket", Comparator.naturalOrder<String>())
     private val battleTracker = RegionBattleTracker()
     private val catchingTracker = RegionCatchingTracker()
 
@@ -70,6 +66,7 @@ object CobbleSpawnRegions : ModInitializer {
     val particleUpdatePlayers = ConcurrentHashMap.newKeySet<UUID>()
 
     @Volatile private var serverReady = false
+    @Volatile private var automaticSpawningReady = false
     @Volatile private var nextSpawnLoopCheckAtMs = 0L
     private val dimensionKeyCache = ConcurrentHashMap<String, RegistryKey<World>>()
 
@@ -87,6 +84,7 @@ object CobbleSpawnRegions : ModInitializer {
 
         ServerLifecycleEvents.SERVER_STARTED.register { server ->
             serverReady = true
+            automaticSpawningReady = false
             SpawnPointScanner.enqueueAllLoadedChunks(server)
 
 
@@ -95,16 +93,27 @@ object CobbleSpawnRegions : ModInitializer {
                 val rWorld = server.getWorld(parseDimension(region.dimension)) ?: continue
                 val box    = RegionSpawnHelper.regionBoundingBox(region)
                 RegionEntityTracker.rebuildFromWorld(rWorld, region.regionId, box)
-                reconcileLoadedRegionChunks(rWorld, region)
-                if (region.forceChunkLoading) {
-                    val added = setRegionChunkTickets(rWorld, region, true, respectCap = true)
-                    RegionsConfig.debugLog(logger, "[CSR] Region '${region.regionId}' added $added chunk ticket(s).")
-                }
                 RegionsConfig.debugLog(
                     logger,
                     "[CSR] Tracker rebuilt for '${region.regionId}': " +
                             "${RegionEntityTracker.countTotal(region.regionId)} entity/ies tracked."
                 )
+            }
+
+            SchedulerManager.schedule(
+                "cobblespawnregions-startup-reconcile",
+                server, 5L, TimeUnit.SECONDS
+            ) {
+                try {
+                    for (region in RegionsConfig.allRegions()) {
+                        val rWorld = server.getWorld(parseDimension(region.dimension)) ?: continue
+                        RegionEntityTracker.rebuildFromWorld(rWorld, region.regionId, RegionSpawnHelper.regionBoundingBox(region))
+                        reconcileLoadedRegionChunks(rWorld, region)
+                    }
+                } finally {
+                    automaticSpawningReady = true
+                    nextSpawnLoopCheckAtMs = 0L
+                }
             }
 
             SchedulerManager.scheduleAtFixedRate(
@@ -140,7 +149,9 @@ object CobbleSpawnRegions : ModInitializer {
 
         ServerLifecycleEvents.SERVER_STOPPING.register { server ->
             serverReady = false
+            automaticSpawningReady = false
             SpawnPointScanner.clearQueue()
+            SchedulerManager.shutdown("cobblespawnregions-startup-reconcile")
             SchedulerManager.shutdown("cobblespawnregions-particle-loop")
             SchedulerManager.shutdown("cobblespawnregions-scan-loop")
             SchedulerManager.shutdown("cobblespawnregions-spawn-loop")
@@ -158,6 +169,7 @@ object CobbleSpawnRegions : ModInitializer {
             SpawnPointStore.clearAll()
             RegionEntityTracker.clearAll()
             RegionWanderingGoalManager.clearAll()
+            SchedulerManager.onServerStopping(server)
         }
 
         ServerChunkEvents.CHUNK_LOAD.register { world, chunk ->
@@ -243,6 +255,7 @@ object CobbleSpawnRegions : ModInitializer {
 
 
     private fun processAllRegionSpawns(server: MinecraftServer) {
+        if (!automaticSpawningReady) return
         val now = System.currentTimeMillis()
         if (now < nextSpawnLoopCheckAtMs) return
 
@@ -299,37 +312,6 @@ object CobbleSpawnRegions : ModInitializer {
         return world.players.any { player ->
             player.x in minX..maxX && player.y in minY..maxY && player.z in minZ..maxZ
         }
-    }
-
-    fun setRegionChunkTickets(
-        world: ServerWorld,
-        region: RegionData,
-        enabled: Boolean,
-        respectCap: Boolean
-    ): Int {
-        var changed = 0
-        var visited = 0
-        val maxTickets = if (enabled && respectCap) region.maxForceLoadedChunks.coerceAtLeast(1) else Int.MAX_VALUE
-        val radius = region.chunkLoadRadius.coerceAtLeast(1)
-        val minCX = minOf(region.pos1.x, region.pos2.x) shr 4
-        val maxCX = maxOf(region.pos1.x, region.pos2.x) shr 4
-        val minCZ = minOf(region.pos1.z, region.pos2.z) shr 4
-        val maxCZ = maxOf(region.pos1.z, region.pos2.z) shr 4
-
-        for (cx in minCX..maxCX) {
-            for (cz in minCZ..maxCZ) {
-                if (visited >= maxTickets) return changed
-                visited++
-                val chunkPos = ChunkPos(cx, cz)
-                if (enabled) {
-                    world.chunkManager.addTicket(REGION_TICKET_TYPE, chunkPos, radius, region.regionId)
-                } else {
-                    world.chunkManager.removeTicket(REGION_TICKET_TYPE, chunkPos, radius, region.regionId)
-                }
-                changed++
-            }
-        }
-        return changed
     }
 
     private fun reconcileLoadedRegionChunks(world: ServerWorld, region: RegionData) {
