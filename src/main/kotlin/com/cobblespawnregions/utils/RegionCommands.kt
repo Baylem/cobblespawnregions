@@ -1,4 +1,4 @@
-package com.cobblespawnregions.utils
+﻿package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
 import com.cobblespawnregions.CobbleSpawnRegions
@@ -69,8 +69,7 @@ object RegionCommands {
             subcommand("reload", permission = permission("reload")) {
                 executes { ctx ->
                     RegionsConfig.reloadBlocking()
-                    SpawnPointStore.clearAll()
-                    SpawnPointScanner.enqueueAllLoadedChunks(ctx.source.server)
+                    CobbleSpawnRegions.refreshRuntimeAfterConfigReload(ctx.source.server)
                     ctx.source.sendMessage(Text.literal("§a[CSR] §fConfig reloaded."))
                     1
                 }
@@ -81,8 +80,7 @@ object RegionCommands {
                     val result = Migrations.migrateCobbleSpawnersToRegions()
                     if (result.migrated > 0) {
                         RegionsConfig.reloadBlocking()
-                        SpawnPointStore.clearAll()
-                        SpawnPointScanner.enqueueAllLoadedChunks(ctx.source.server)
+                        CobbleSpawnRegions.refreshRuntimeAfterConfigReload(ctx.source.server)
                     }
                     val color = if (result.failed == 0) "§a" else "§c"
                     ctx.source.sendMessage(Text.literal("$color[CSR] §f${result.message}"))
@@ -112,6 +110,13 @@ object RegionCommands {
         subcommand("delete", permission = permission("delete")) {
             then(regionIdArg().executes { ctx ->
                 deleteRegion(ctx.source, StringArgumentType.getString(ctx, "regionId"))
+            })
+        }
+
+        subcommand("reclaim", permission = permission("reclaim")) {
+            then(regionIdArg().executes { ctx ->
+                val player = playerOrError(ctx.source) ?: return@executes 0
+                reclaimRegionFromSelection(player, ctx.source, StringArgumentType.getString(ctx, "regionId"))
             })
         }
 
@@ -200,6 +205,13 @@ object RegionCommands {
                     )
                 }
             ))
+        }
+
+        subcommand("rescanspawnpoints", permission = permission("rescanspawnpoints")) {
+            executes { ctx -> rescanSpawnPoints(ctx.source, null) }
+            then(regionIdArg().executes { ctx ->
+                rescanSpawnPoints(ctx.source, StringArgumentType.getString(ctx, "regionId"))
+            })
         }
 
         subcommand("info", permission = permission("info")) {
@@ -297,6 +309,13 @@ object RegionCommands {
         subcommand("delete", permission = permission("region.delete")) {
             then(regionIdArg().executes { ctx ->
                 deleteRegion(ctx.source, StringArgumentType.getString(ctx, "regionId"))
+            })
+        }
+
+        subcommand("reclaim", permission = permission("region.reclaim")) {
+            then(regionIdArg().executes { ctx ->
+                val player = playerOrError(ctx.source) ?: return@executes 0
+                reclaimRegionFromSelection(player, ctx.source, StringArgumentType.getString(ctx, "regionId"))
             })
         }
 
@@ -446,7 +465,7 @@ object RegionCommands {
 
         player.teleport(world, x, y, z, player.yaw, player.pitch)
         player.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fTeleported to Â§e${region.regionName} Â§8(${region.regionId})Â§f."
+            "§a[CSR] §fTeleported to §e${region.regionName} §8(${region.regionId})§f."
         ), false)
         return 1
     }
@@ -457,29 +476,29 @@ object RegionCommands {
             return 0
         }
         val world = worldForRegion(source, region) ?: return 0
+        val normalizedMode = mode.lowercase()
+        if (normalizedMode != "loaded" && normalizedMode != "tracked" && normalizedMode != "all") {
+            source.sendError(Text.literal("Unknown kill mode '$mode'. Use: loaded or tracked."))
+            return 0
+        }
         val box = RegionSpawnHelper.regionBoundingBox(region)
 
-        val spawned = world.getEntitiesByClass(PokemonEntity::class.java, box) { entity ->
-            entity.pokemon.persistentData.getString(RegionEntityTracker.REGION_KEY) == regionId
-        }
+        val spawned = RegionEntityTracker.loadedManagedEntities(world, regionId, box)
 
         spawned.forEach { entity ->
             RegionWanderingGoalManager.forget(entity.uuid)
             RegionEntityTracker.untrack(entity.uuid)
             entity.discard()
         }
-        if (mode.equals("tracked", ignoreCase = true) || mode.equals("all", ignoreCase = true)) {
+        if (normalizedMode == "tracked" || normalizedMode == "all") {
             RegionEntityTracker.clearRegion(regionId)
-        } else if (!mode.equals("loaded", ignoreCase = true)) {
-            source.sendError(Text.literal("Unknown kill mode '$mode'. Use: loaded or tracked."))
-            return 0
         }
         RegionEntityTracker.flushIfDirty()
 
         val remainingTracked = RegionEntityTracker.countTotal(regionId)
         source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fKilled Â§e${spawned.size} Â§floaded spawned Pokemon in Â§e${region.regionName}Â§f. " +
-                    "Â§7Tracked remaining: Â§f${remainingTracked}Â§7."
+            "§a[CSR] §fKilled §e${spawned.size} §floaded spawned Pokemon in §e${region.regionName}§f. " +
+                    "§7Tracked remaining: §f${remainingTracked}§7."
         ))
         return 1
     }
@@ -510,7 +529,7 @@ object RegionCommands {
         }
 
         source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fAdded Â§e${describePokemon(pokemonName, formName, aspects)} Â§fto Â§e${region.regionName}Â§f."
+            "§a[CSR] §fAdded §e${describePokemon(pokemonName, formName, aspects)} §fto §e${region.regionName}§f."
         ))
         return 1
     }
@@ -531,7 +550,7 @@ object RegionCommands {
             return 0
         }
         source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fRemoved Â§e${describePokemon(pokemonName, formName, aspects)} Â§ffrom Â§e${region.regionName}Â§f."
+            "§a[CSR] §fRemoved §e${describePokemon(pokemonName, formName, aspects)} §ffrom §e${region.regionName}§f."
         ))
         return 1
     }
@@ -541,7 +560,7 @@ object RegionCommands {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
         }
-        source.sendMessage(Text.literal("Â§a[CSR] Â§fRenamed region Â§e${region.regionId} Â§fto Â§e${region.regionName}Â§f."))
+        source.sendMessage(Text.literal("§a[CSR] §fRenamed region §e${region.regionId} §fto §e${region.regionName}§f."))
         return 1
     }
 
@@ -561,12 +580,12 @@ object RegionCommands {
         val pokemon = nearest.pokemon
         val data = pokemon.persistentData
         val conditions = PokemonConditionExtractor.extractAllConditions(pokemon)
-        source.sendMessage(Text.literal("Â§a[CSR] Â§fNearest Pokemon: Â§e${pokemon.species.name} Â§7lv ${pokemon.level}"))
-        source.sendMessage(Text.literal("Â§7UUID: Â§f${nearest.uuid}"))
-        source.sendMessage(Text.literal("Â§7Form: Â§f${pokemon.form.name} Â§7Aspects: Â§f${pokemon.aspects.joinToString(", ").ifEmpty { "none" }}"))
-        source.sendMessage(Text.literal("Â§7Managed Region: Â§f${data.getString(RegionEntityTracker.REGION_KEY).ifEmpty { "none" }}"))
-        source.sendMessage(Text.literal("Â§7Conditions (${conditions.size}): Â§f${conditions.take(20).joinToString(", ")}"))
-        if (conditions.size > 20) source.sendMessage(Text.literal("Â§8...and ${conditions.size - 20} more."))
+        source.sendMessage(Text.literal("§a[CSR] §fNearest Pokemon: §e${pokemon.species.name} §7lv ${pokemon.level}"))
+        source.sendMessage(Text.literal("§7UUID: §f${nearest.uuid}"))
+        source.sendMessage(Text.literal("§7Form: §f${pokemon.form.name} §7Aspects: §f${pokemon.aspects.joinToString(", ").ifEmpty { "none" }}"))
+        source.sendMessage(Text.literal("§7Managed Region: §f${data.getString(RegionEntityTracker.REGION_KEY).ifEmpty { "none" }}"))
+        source.sendMessage(Text.literal("§7Conditions (${conditions.size}): §f${conditions.take(20).joinToString(", ")}"))
+        if (conditions.size > 20) source.sendMessage(Text.literal("§8...and ${conditions.size - 20} more."))
         return 1
     }
 
@@ -578,9 +597,39 @@ object RegionCommands {
         val world = worldForRegion(source, region) ?: return 0
         val spawned = RegionSpawnHelper.attemptSpawnInRegion(world, region, amount.coerceAtLeast(1), respectTimer = false)
         source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fForce spawned Â§e${spawned.size} Â§fPokemon in Â§e${region.regionName}Â§f."
+            "§a[CSR] §fForce spawned §e${spawned.size} §fPokemon in §e${region.regionName}§f."
         ))
         return 1
+    }
+
+    private fun rescanSpawnPoints(source: ServerCommandSource, regionId: String?): Int {
+        SpawnPointScanner.clearQueue()
+
+        if (regionId != null) {
+            val region = RegionsConfig.getRegion(regionId) ?: run {
+                source.sendError(Text.literal("No region found with id '$regionId'."))
+                return 0
+            }
+            val scanned = rescanSpawnPointsForRegion(regionId, region, source)
+            source.sendMessage(Text.literal(
+                "§a[CSR] §fRescanned §e$scanned §floaded chunk(s) for spawn points in §e${region.regionName}§f."
+            ))
+            return 1
+        }
+
+        SpawnPointStore.clearAll()
+        RegionsConfig.lastSpawnTicks.clear()
+        val scanned = SpawnPointScanner.scanAllLoadedChunks(source.server)
+        source.sendMessage(Text.literal(
+            "§a[CSR] §fRescanned §e$scanned §floaded chunk(s) for spawn points across all regions."
+        ))
+        return 1
+    }
+
+    private fun rescanSpawnPointsForRegion(regionId: String, region: RegionData, source: ServerCommandSource): Int {
+        SpawnPointStore.clearRegion(regionId)
+        RegionSpawnHelper.resetSpawnTimer(regionId)
+        return SpawnPointScanner.scanLoadedChunks(regionId, region, source.server)
     }
 
     private fun showRegionInfo(source: ServerCommandSource, regionId: String): Int {
@@ -588,13 +637,13 @@ object RegionCommands {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
         }
-        source.sendMessage(Text.literal("Â§a[CSR] Â§e${region.regionName} Â§8(${region.regionId})"))
-        source.sendMessage(Text.literal("Â§7Dimension: Â§f${region.dimension} Â§7Mode: Â§f${region.mode} Â§7Priority: Â§f${region.priority}"))
-        source.sendMessage(Text.literal("Â§7Bounds: Â§f(${region.pos1.x},${region.pos1.y},${region.pos1.z}) -> (${region.pos2.x},${region.pos2.y},${region.pos2.z})"))
-        source.sendMessage(Text.literal("Â§7Custom Pokemon: Â§f${region.selectedPokemon.size} Â§7Timer: Â§f${region.spawnTimerTicks} Â§7Amount: Â§f${region.spawnAmountPerSpawn}"))
-        source.sendMessage(Text.literal("Â§7Max Alive: Â§f${region.maxTotalSpawns} Â§7Tracked: Â§f${RegionEntityTracker.countTotal(regionId)}"))
-        source.sendMessage(Text.literal("Â§7Require Player: ${flag(region.requirePlayerInRange)} Â§7Range: Â§f${region.playerActivationRange.toInt()}"))
-        source.sendMessage(Text.literal("Â§7Natural Disable All: ${flag(region.spawnRestrictions.disableAll)} Â§7Blocked Species: Â§f${region.spawnRestrictions.disallowedSpecies.size}"))
+        source.sendMessage(Text.literal("§a[CSR] §e${region.regionName} §8(${region.regionId})"))
+        source.sendMessage(Text.literal("§7Dimension: §f${region.dimension} §7Mode: §f${region.mode} §7Priority: §f${region.priority}"))
+        source.sendMessage(Text.literal("§7Bounds: §f(${region.pos1.x},${region.pos1.y},${region.pos1.z}) -> (${region.pos2.x},${region.pos2.y},${region.pos2.z})"))
+        source.sendMessage(Text.literal("§7Custom Pokemon: §f${region.selectedPokemon.size} §7Timer: §f${region.spawnTimerTicks} §7Amount: §f${region.spawnAmountPerSpawn}"))
+        source.sendMessage(Text.literal("§7Max Alive: §f${region.maxTotalSpawns} §7Tracked: §f${RegionEntityTracker.countTotal(regionId)}"))
+        source.sendMessage(Text.literal("§7Require Player: ${flag(region.requirePlayerInRange)} §7Range: §f${region.playerActivationRange.toInt()}"))
+        source.sendMessage(Text.literal("§7Natural Disable All: ${flag(region.spawnRestrictions.disableAll)} §7Blocked Species: §f${region.spawnRestrictions.disallowedSpecies.size}"))
         return 1
     }
 
@@ -634,8 +683,33 @@ object RegionCommands {
         RegionsConfig.addRegion(cloned)
         CobbleSpawnRegions.playerSelections.remove(player.uuid)
         CobbleSpawnRegions.requestParticleUpdate(player.uuid)
-        SpawnPointScanner.enqueueLoadedChunks(regionId, cloned, source.server)
-        source.sendMessage(Text.literal("Â§a[CSR] Â§fCloned Â§e${sourceRegion.regionName} Â§fto Â§e${cloned.regionName}Â§f."))
+        rescanSpawnPointsForRegion(regionId, cloned, source)
+        source.sendMessage(Text.literal("§a[CSR] §fCloned §e${sourceRegion.regionName} §fto §e${cloned.regionName}§f."))
+        return 1
+    }
+
+    private fun reclaimRegionFromSelection(player: ServerPlayerEntity, source: ServerCommandSource, regionId: String): Int {
+        val existing = RegionsConfig.getRegion(regionId) ?: run {
+            source.sendError(Text.literal("No region found with id '$regionId'."))
+            return 0
+        }
+        val bounds = selectionBounds(player, source) ?: return 0
+        val mode = CobbleSpawnRegions.playerSelections[player.uuid]?.mode?.name ?: existing.mode
+        val dimension = player.serverWorld.registryKey.value.toString()
+
+        val region = RegionsConfig.updateRegion(regionId) {
+            it.pos1 = bounds.first
+            it.pos2 = bounds.second
+            it.dimension = dimension
+            it.mode = mode
+        } ?: return 0
+
+        CobbleSpawnRegions.playerSelections.remove(player.uuid)
+        CobbleSpawnRegions.requestParticleUpdate(player.uuid)
+        val scanned = rescanSpawnPointsForRegion(regionId, region, source)
+        source.sendMessage(Text.literal(
+            "§a[CSR] §fReclaimed §e${region.regionName}§f and rescanned §e$scanned §floaded chunk(s)."
+        ))
         return 1
     }
 
@@ -644,7 +718,7 @@ object RegionCommands {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
         }
-        source.sendMessage(Text.literal("Â§a[CSR] Â§fSet Â§e${region.regionName} Â§fspawn amount to Â§e${region.spawnAmountPerSpawn}Â§f."))
+        source.sendMessage(Text.literal("§a[CSR] §fSet §e${region.regionName} §fspawn amount to §e${region.spawnAmountPerSpawn}§f."))
         return 1
     }
 
@@ -661,7 +735,7 @@ object RegionCommands {
             return 0
         }
         source.sendMessage(Text.literal(
-            "Â§a[CSR] Â§fPlayer activation for Â§e${region.regionName}Â§f: ${flag(region.requirePlayerInRange)} Â§7range Â§f${region.playerActivationRange.toInt()}"
+            "§a[CSR] §fPlayer activation for §e${region.regionName}§f: ${flag(region.requirePlayerInRange)} §7range §f${region.playerActivationRange.toInt()}"
         ))
         return 1
     }
@@ -780,7 +854,7 @@ object RegionCommands {
         CobbleSpawnRegions.playerSelections.remove(player.uuid)
         CobbleSpawnRegions.requestParticleUpdate(player.uuid)
 
-        SpawnPointScanner.enqueueLoadedChunks(regionId, RegionsConfig.getRegion(regionId)!!, source.server)
+        rescanSpawnPointsForRegion(regionId, RegionsConfig.getRegion(regionId)!!, source)
 
         player.sendMessage(Text.literal(
             "§a[CSR] §fRegion §e$name §f[${sel.mode.name}] created. " +
@@ -845,7 +919,7 @@ object RegionCommands {
         val sel = CobbleSpawnRegions.playerSelections[player.uuid]
         if (sel == null || !sel.isBothSet) {
             player.sendMessage(Text.literal(
-                "Â§c[CSR] Â§fUse a Â§6Coords Â§for Â§bChunk Â§fclaim stick and select both points first."
+                "§c[CSR] §fUse a §6Coords §for §bChunk §fclaim stick and select both points first."
             ), false)
             return null
         }
@@ -866,7 +940,10 @@ object RegionCommands {
         entry.copy(
             aspects = entry.aspects.toSet(),
             sizeSettings = entry.sizeSettings.copy(),
-            captureSettings = entry.captureSettings.copy(requiredPokeBalls = entry.captureSettings.requiredPokeBalls.toList()),
+            captureSettings = entry.captureSettings.copy(
+                requiredPokeBalls = entry.captureSettings.requiredPokeBalls.toList(),
+                customRequiredPokeBalls = entry.captureSettings.customRequiredPokeBalls.toList()
+            ),
             ivSettings = entry.ivSettings.copy(),
             evSettings = entry.evSettings.copy(),
             spawnSettings = entry.spawnSettings.copy(allowedBlocks = entry.spawnSettings.allowedBlocks.toList()),

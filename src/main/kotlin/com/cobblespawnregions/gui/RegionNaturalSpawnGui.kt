@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.utils.RegionRestrictionConfig
 import com.cobblespawnregions.utils.RegionsConfig

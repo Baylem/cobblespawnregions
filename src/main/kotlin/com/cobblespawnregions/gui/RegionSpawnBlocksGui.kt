@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.utils.RegionsConfig
 import com.everlastingutils.gui.CustomGui
@@ -131,7 +131,7 @@ object RegionSpawnBlocksGui {
         if (block == Blocks.AIR) {
             player.sendMessage(
                 Text.literal("§c[CSR] §f${cursor.item.name.string} §cisn't a placeable block. " +
-                        "Use the buttons below for Air/Water/Solid."),
+                        "§7Use the buttons below for Air/Water/Solid."),
                 false
             )
             return

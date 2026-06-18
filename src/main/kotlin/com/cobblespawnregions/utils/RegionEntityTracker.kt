@@ -146,6 +146,40 @@ object RegionEntityTracker {
         }
     }
 
+    fun loadedManagedEntities(world: ServerWorld, regionId: String, regionBox: Box? = null): List<PokemonEntity> {
+        val dimension = world.registryKey.value.toString()
+        val entities = linkedMapOf<UUID, PokemonEntity>()
+
+        liveUuidMap.entries
+            .filter { it.value.regionId == regionId && (it.value.dimension.isEmpty() || it.value.dimension == dimension) }
+            .forEach { entry ->
+                val entity = world.getEntity(entry.key) as? PokemonEntity
+                if (entity == null || entity.isRemoved) {
+                    liveUuidMap.remove(entry.key, entry.value)
+                    return@forEach
+                }
+
+                val data = entity.pokemon.persistentData
+                if (data.getString(REGION_KEY) == regionId) {
+                    entities[entity.uuid] = entity
+                    trackLoadedEntity(entity)
+                } else {
+                    liveUuidMap.remove(entry.key, entry.value)
+                }
+            }
+
+        if (regionBox != null) {
+            world.getEntitiesByClass(PokemonEntity::class.java, regionBox) { entity ->
+                entity.pokemon.persistentData.getString(REGION_KEY) == regionId
+            }.forEach { entity ->
+                entities[entity.uuid] = entity
+                trackLoadedEntity(entity)
+            }
+        }
+
+        return entities.values.toList()
+    }
+
     fun countForEntry(regionId: String, entryKey: String): Int =
         tracked[regionId]?.get(entryKey)?.size ?: 0
 

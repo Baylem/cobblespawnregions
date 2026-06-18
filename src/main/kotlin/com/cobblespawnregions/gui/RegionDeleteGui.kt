@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.CobbleSpawnRegions
 import com.cobblespawnregions.utils.RegionData

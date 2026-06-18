@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblemon.mod.common.api.pokemon.labels.CobblemonPokemonLabels
 import com.cobblespawnregions.utils.RegionRestrictionConfig

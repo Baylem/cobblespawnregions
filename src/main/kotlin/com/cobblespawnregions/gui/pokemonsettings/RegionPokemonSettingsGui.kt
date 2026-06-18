@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui.pokemonsettings
+﻿package com.cobblespawnregions.gui.pokemonsettings
 
 import com.cobblemon.mod.common.api.moves.Moves
 import com.cobblemon.mod.common.api.pokemon.PokemonSpecies
@@ -7,10 +7,12 @@ import com.cobblespawnregions.gui.RegionPokemonEntryGui
 import com.cobblespawnregions.gui.refreshGuiSlots
 import com.cobblespawnregions.utils.EVSettings
 import com.cobblespawnregions.utils.IVSettings
+import com.cobblespawnregions.utils.ItemStackSerialization
 import com.cobblespawnregions.utils.LeveledMove
 import com.cobblespawnregions.utils.MovesSettings
 import com.cobblespawnregions.utils.PokemonSpawnEntry
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.SerializableItemStack
 import com.cobblespawnregions.utils.SizeSettings
 import com.cobblespawnregions.utils.SpawnChanceType
 import com.everlastingutils.gui.AnvilGuiManager
@@ -18,10 +20,13 @@ import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.FullyModularAnvilScreenHandler
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
+import com.google.gson.JsonElement
+import com.mojang.serialization.JsonOps
 import net.minecraft.component.DataComponentTypes
 import net.minecraft.component.type.LoreComponent
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
+import net.minecraft.registry.RegistryOps
 import net.minecraft.registry.Registries
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
@@ -61,6 +66,20 @@ object RegionPokemonSettingsGui {
             .sorted(compareBy { it.name.string })
             .toList()
     }
+
+    private object CaptureBallSlots {
+        const val PAGE_SIZE = 45
+        const val PREV = 45
+        const val ADD_CUSTOM = 47
+        const val BACK = 49
+        const val NEXT = 53
+    }
+
+    private data class CaptureBallEntry(
+        val stack: ItemStack,
+        val ballName: String? = null,
+        val customIndex: Int? = null
+    )
 
     private data class Target(
         val regionId: String,
@@ -125,7 +144,7 @@ object RegionPokemonSettingsGui {
         CustomGui.openGui(
             player,
             "Allowed Balls: ${entry.pokemonName}",
-            captureBallsLayout(entry.captureSettings.requiredPokeBalls, page),
+            captureBallsLayout(player, entry.captureSettings, page),
             { ctx -> handleCaptureBalls(ctx, player, target) },
             { ballPages.remove(player) }
         )
@@ -384,38 +403,96 @@ object RegionPokemonSettingsGui {
 
     private fun handleCaptureBalls(ctx: InteractionContext, player: ServerPlayerEntity, target: Target) {
         val page = ballPages.getOrDefault(player, 0)
+        val entry = getEntry(player, target) ?: return
+        val entries = captureBallEntries(player, entry.captureSettings)
         when (ctx.slotIndex) {
-            45 -> if (page > 0) ballPages[player] = page - 1
-            53 -> if ((page + 1) * 45 < availablePokeBalls.size) ballPages[player] = page + 1
-            49 -> return openCapture(player, target.regionId, target.pokemonName, target.formName, target.aspects)
-            in 0 until 45 -> {
-                val ballName = (ctx.clickedStack.item as? PokeBallItem)?.let { Registries.ITEM.getId(it).path } ?: return
-                update(target) {
-                    val balls = it.captureSettings.requiredPokeBalls.toMutableList()
-                    if (ballName in balls) balls.remove(ballName) else balls.add(ballName)
-                    it.captureSettings.requiredPokeBalls = balls
+            CaptureBallSlots.PREV -> if (page > 0) ballPages[player] = page - 1
+            CaptureBallSlots.NEXT -> if ((page + 1) * CaptureBallSlots.PAGE_SIZE < entries.size) ballPages[player] = page + 1
+            CaptureBallSlots.ADD_CUSTOM -> addCustomCaptureBall(player, target)
+            CaptureBallSlots.BACK -> return openCapture(player, target.regionId, target.pokemonName, target.formName, target.aspects)
+            in 0 until CaptureBallSlots.PAGE_SIZE -> {
+                val selectedEntry = entries.getOrNull(page * CaptureBallSlots.PAGE_SIZE + ctx.slotIndex) ?: return
+                if (selectedEntry.customIndex != null) {
+                    update(target) {
+                        val balls = it.captureSettings.customRequiredPokeBalls.toMutableList()
+                        if (selectedEntry.customIndex in balls.indices) {
+                            balls.removeAt(selectedEntry.customIndex)
+                            it.captureSettings.customRequiredPokeBalls = balls
+                        }
+                    }
+                } else {
+                    val ballName = selectedEntry.ballName ?: return
+                    update(target) {
+                        val balls = it.captureSettings.requiredPokeBalls.toMutableList()
+                        if (ballName in balls) balls.remove(ballName) else balls.add(ballName)
+                        it.captureSettings.requiredPokeBalls = balls
+                    }
                 }
             }
         }
-        val entry = getEntry(player, target) ?: return
-        CustomGui.refreshGui(player, captureBallsLayout(entry.captureSettings.requiredPokeBalls, ballPages.getOrDefault(player, 0)))
+        val refreshed = getEntry(player, target) ?: return
+        CustomGui.refreshGui(player, captureBallsLayout(player, refreshed.captureSettings, ballPages.getOrDefault(player, 0)))
     }
 
-    private fun captureBallsLayout(selected: List<String>, page: Int): List<ItemStack> {
+    private fun captureBallsLayout(player: ServerPlayerEntity, settings: com.cobblespawnregions.utils.CaptureSettings, page: Int): List<ItemStack> {
         val layout = MutableList(54) { filler() }
-        availablePokeBalls.drop(page * 45).take(45).forEachIndexed { index, stack ->
-            val item = stack.copy()
-            val ballName = (item.item as? PokeBallItem)?.let { Registries.ITEM.getId(it).path } ?: ""
-            val isSelected = ballName in selected
+        val entries = captureBallEntries(player, settings)
+        entries.drop(page * CaptureBallSlots.PAGE_SIZE).take(CaptureBallSlots.PAGE_SIZE).forEachIndexed { index, entry ->
+            val item = entry.stack.copy()
+            val isSelected = entry.customIndex != null || entry.ballName in settings.requiredPokeBalls
             val status = if (isSelected) Text.literal("Selected").formatted(Formatting.GREEN) else Text.literal("Not Selected").formatted(Formatting.RED)
-            item.set(DataComponentTypes.LORE, LoreComponent(listOf(Text.literal("Status: ").append(status))))
+            val action = if (entry.customIndex != null) Text.literal("Click to remove custom ball.").formatted(Formatting.GRAY) else Text.literal("Click to toggle.")
+            item.set(DataComponentTypes.LORE, LoreComponent(listOf(Text.literal("Status: ").append(status), action)))
             if (isSelected) item.set(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, true)
             layout[index] = item
         }
-        layout[45] = if (page > 0) head("Previous Page", Formatting.GREEN, emptyList(), Textures.PREV) else filler()
-        layout[49] = backButton()
-        layout[53] = if ((page + 1) * 45 < availablePokeBalls.size) head("Next Page", Formatting.GREEN, emptyList(), Textures.NEXT) else filler()
+        layout[CaptureBallSlots.PREV] = if (page > 0) head("Previous Page", Formatting.GREEN, emptyList(), Textures.PREV) else filler()
+        layout[CaptureBallSlots.ADD_CUSTOM] = itemButton(
+            ItemStack(Items.CHEST),
+            "Add Custom Ball",
+            Formatting.YELLOW,
+            listOf("Put a Poke Ball on your cursor.", "Click here to add that exact item.", "Custom name/components are preserved.")
+        )
+        layout[CaptureBallSlots.BACK] = backButton()
+        layout[CaptureBallSlots.NEXT] = if ((page + 1) * CaptureBallSlots.PAGE_SIZE < entries.size) head("Next Page", Formatting.GREEN, emptyList(), Textures.NEXT) else filler()
         return layout
+    }
+
+    private fun captureBallEntries(player: ServerPlayerEntity, settings: com.cobblespawnregions.utils.CaptureSettings): List<CaptureBallEntry> {
+        val ops: RegistryOps<JsonElement> = RegistryOps.of(JsonOps.INSTANCE, player.server.registryManager)
+        val standard = availablePokeBalls.mapNotNull { stack ->
+            val ballName = (stack.item as? PokeBallItem)?.let { Registries.ITEM.getId(it).path } ?: return@mapNotNull null
+            CaptureBallEntry(stack.copy(), ballName = ballName)
+        }
+        val custom = settings.customRequiredPokeBalls.mapIndexedNotNull { index, serialized ->
+            val stack = runCatching { serialized.toItemStack(ops) }.getOrNull() ?: return@mapIndexedNotNull null
+            CaptureBallEntry(stack, customIndex = index)
+        }
+        return standard + custom
+    }
+
+    private fun addCustomCaptureBall(player: ServerPlayerEntity, target: Target) {
+        val cursor = player.currentScreenHandler.cursorStack
+        if (cursor.isEmpty || cursor.item !is PokeBallItem) {
+            player.sendMessage(Text.literal("§c[CSR] §fPut a Poke Ball on your cursor, then click Add Custom Ball."), false)
+            return
+        }
+
+        val ops: RegistryOps<JsonElement> = RegistryOps.of(JsonOps.INSTANCE, player.server.registryManager)
+        val serialized = SerializableItemStack.fromItemStack(cursor, ops)
+        var added = false
+        update(target) {
+            val balls = it.captureSettings.customRequiredPokeBalls.toMutableList()
+            if (balls.none { existing -> ItemStackSerialization.equivalent(existing, serialized) }) {
+                balls.add(serialized)
+                it.captureSettings.customRequiredPokeBalls = balls
+                added = true
+            }
+        }
+        player.sendMessage(
+            Text.literal(if (added) "§a[CSR] §fAdded custom capture ball §e${cursor.name.string}§f." else "§7[CSR] §fThat custom capture ball is already selected."),
+            false
+        )
     }
 
     private val timeCycle = listOf("ALL", "DAY", "NIGHT")
@@ -536,7 +613,7 @@ object RegionPokemonSettingsGui {
                     }
                     reopen()
                 } else {
-                    player.sendMessage(Text.literal("Invalid move name.").formatted(Formatting.RED), false)
+                    player.sendMessage(Text.literal("§c[CSR] §fInvalid move name."), false)
                 }
             },
             onTextChange = onTextChange@{ text ->
@@ -597,7 +674,7 @@ object RegionPokemonSettingsGui {
     private fun getEntry(player: ServerPlayerEntity, target: Target): PokemonSpawnEntry? {
         val entry = RegionsConfig.getPokemonFromRegion(target.regionId, target.pokemonName, target.formName, target.aspects)
         if (entry == null) {
-            player.sendMessage(Text.literal("CSR entry not found."), false)
+            player.sendMessage(Text.literal("§c[CSR] §fEntry not found."), false)
             RegionPokemonEntryGui.open(player, target.regionId, target.pokemonName, target.formName, target.aspects)
         }
         return entry

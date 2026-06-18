@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblemon.mod.common.api.pokemon.PokemonProperties
 import com.cobblemon.mod.common.item.PokemonItem
@@ -83,7 +83,7 @@ object RegionConditionScannerGui {
 
         if (filteredConditions.isEmpty()) {
             player.sendMessage(
-                Text.literal("§cFailed to scan ${species.name}. Check console for errors."),
+                Text.literal("§c[CSR] §fFailed to scan §e${species.name}§f. §7Check console for errors."),
                 false
             )
             return

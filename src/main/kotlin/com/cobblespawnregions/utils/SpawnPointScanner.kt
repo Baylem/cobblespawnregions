@@ -86,6 +86,39 @@ object SpawnPointScanner {
         }
     }
 
+    fun scanLoadedChunks(regionId: String, region: RegionData, server: MinecraftServer): Int {
+        val worldKey = RegistryKey.of(
+            RegistryKeys.WORLD,
+            Identifier.tryParse(region.dimension) ?: return 0
+        )
+        val world = server.getWorld(worldKey) ?: return 0
+
+        val minCX = minOf(region.pos1.x, region.pos2.x) shr 4
+        val maxCX = maxOf(region.pos1.x, region.pos2.x) shr 4
+        val minCZ = minOf(region.pos1.z, region.pos2.z) shr 4
+        val maxCZ = maxOf(region.pos1.z, region.pos2.z) shr 4
+        var scanned = 0
+
+        for (cx in minCX..maxCX) {
+            for (cz in minCZ..maxCZ) {
+                if (!world.isChunkLoaded(cx, cz)) continue
+                if (SpawnPointStore.isChunkScanned(regionId, cx, cz)) continue
+                scanChunkForRegion(regionId, region, ChunkPos(cx, cz), world)
+                scanned++
+            }
+        }
+
+        return scanned
+    }
+
+    fun scanAllLoadedChunks(server: MinecraftServer): Int {
+        var scanned = 0
+        RegionsConfig.allRegions().forEach { region ->
+            scanned += scanLoadedChunks(region.regionId, region, server)
+        }
+        return scanned
+    }
+
 
 
 

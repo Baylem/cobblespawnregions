@@ -1,17 +1,20 @@
-package com.cobblespawnregions.utils
+﻿package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.api.events.CobblemonEvents
 import com.cobblemon.mod.common.api.events.pokeball.PokeBallCaptureCalculatedEvent
 import com.cobblemon.mod.common.api.pokeball.catching.CaptureContext
 import com.cobblemon.mod.common.entity.pokeball.EmptyPokeBallEntity
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
+import com.google.gson.JsonElement
+import com.mojang.serialization.JsonOps
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.minecraft.entity.ItemEntity
+import net.minecraft.item.ItemStack
+import net.minecraft.registry.RegistryOps
 import net.minecraft.registry.Registries
 import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.text.Text
-import net.minecraft.util.Formatting
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -61,14 +64,17 @@ class RegionCatchingTracker {
 
         var blockCapture = false
         if (!captureSettings.isCatchable) {
-            thrower.sendMessage(Text.literal("This Pokemon cannot be captured!").formatted(Formatting.RED), false)
+            thrower.sendMessage(Text.literal("§c[CSR] §fThis Pokemon cannot be captured."), false)
             blockCapture = true
         } else if (captureSettings.restrictCaptureToLimitedBalls) {
             val usedBall = Registries.ITEM.getId(pokeBallEntity.pokeBall.item()).toString()
             val allowedBalls = prepareAllowedPokeBallList(captureSettings.requiredPokeBalls)
-            if (!allowedBalls.contains("ALL") && allowedBalls.none { it.equals(usedBall, ignoreCase = true) }) {
-                val allowedDisplay = allowedBalls.joinToString { it.substringAfter(":") }
-                thrower.sendMessage(Text.literal("Only specific Poke Balls work! Allowed: $allowedDisplay").formatted(Formatting.RED), false)
+            val usedStack = ItemStackSerialization.peekThrownBallStack(pokeBallEntity.uuid)
+            val customAllowed = captureSettings.customRequiredPokeBalls
+            val customMatches = usedStack != null && customAllowed.any { ItemStackSerialization.equivalent(it, usedStack) }
+            if (!allowedBalls.contains("ALL") && allowedBalls.none { it.equals(usedBall, ignoreCase = true) } && !customMatches) {
+                val allowedDisplay = allowedBallDisplay(allowedBalls, customAllowed, thrower.serverWorld)
+                thrower.sendMessage(Text.literal("§c[CSR] §fOnly specific Poke Balls work. §7Allowed: §e$allowedDisplay"), false)
                 blockCapture = true
             }
         }
@@ -81,6 +87,8 @@ class RegionCatchingTracker {
             )
             playerTrackingMap.computeIfAbsent(thrower) { ConcurrentLinkedQueue() }
                 .add(PokeballTrackingInfo(pokeBallEntity.uuid, pokeBallEntity))
+        } else {
+            ItemStackSerialization.takeThrownBallStack(pokeBallEntity.uuid)
         }
     }
 
@@ -103,8 +111,17 @@ class RegionCatchingTracker {
             }
         }
 
+    private fun allowedBallDisplay(allowedPokeBalls: List<String>, customAllowed: List<SerializableItemStack>, world: ServerWorld): String {
+        val ops: RegistryOps<JsonElement> = RegistryOps.of(JsonOps.INSTANCE, world.server.registryManager)
+        val standard = allowedPokeBalls.map { if (it == "ALL") "all" else it.substringAfter(":") }
+        val custom = customAllowed.mapNotNull {
+            runCatching { it.toItemStack(ops).name.string }.getOrNull()
+        }
+        return (standard + custom).ifEmpty { listOf("none") }.joinToString()
+    }
+
     private fun returnPokeballToPlayer(player: ServerPlayerEntity, pokeBallEntity: EmptyPokeBallEntity) {
-        val pokeBallStack = pokeBallEntity.pokeBall.item().defaultStack
+        val pokeBallStack = restoredPokeBallStack(player, pokeBallEntity)
         if (pokeBallStack.isEmpty) return
         if (!pokeBallEntity.isRemoved) pokeBallEntity.discard()
 
@@ -114,5 +131,11 @@ class RegionCatchingTracker {
             itemEntity.setToDefaultPickupDelay()
             player.world.spawnEntity(itemEntity)
         }
+    }
+
+    private fun restoredPokeBallStack(player: ServerPlayerEntity, pokeBallEntity: EmptyPokeBallEntity): ItemStack {
+        val serialized = ItemStackSerialization.takeThrownBallStack(pokeBallEntity.uuid) ?: return pokeBallEntity.pokeBall.item().defaultStack
+        val ops: RegistryOps<JsonElement> = RegistryOps.of(JsonOps.INSTANCE, player.server.registryManager)
+        return runCatching { serialized.toItemStack(ops) }.getOrElse { pokeBallEntity.pokeBall.item().defaultStack }
     }
 }

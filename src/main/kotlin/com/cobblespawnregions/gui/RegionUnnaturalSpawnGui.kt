@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.utils.RegionsConfig
 import com.everlastingutils.gui.CustomGui
@@ -48,7 +48,7 @@ object RegionUnnaturalSpawnGui {
 
     fun open(player: ServerPlayerEntity, regionId: String) {
         val region = RegionsConfig.getRegion(regionId) ?: run {
-            player.sendMessage(Text.literal("\u00A7c[CSR] Region not found."), false)
+            player.sendMessage(Text.literal("§c[CSR] §fRegion not found."), false)
             return
         }
         CustomGui.openGui(

@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.everlastingutils.gui.AnvilGuiManager
 import com.everlastingutils.gui.CustomGui
@@ -83,7 +83,7 @@ object RegionPokemonSearchGui {
         }
 
         player.sendMessage(
-            Text.literal("§7Type a Pokémon name, then click the §agreen button §7to search, or §cX §7to cancel."),
+            Text.literal("§7[CSR] §fType a Pokémon name, then click the §agreen button §fto search, or §cX §fto cancel."),
             false
         )
     }

@@ -1,4 +1,4 @@
-package com.cobblespawnregions
+﻿package com.cobblespawnregions
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
 import com.cobblespawnregions.utils.RegionCommands
@@ -334,10 +334,7 @@ object CobbleSpawnRegions : ModInitializer {
         for (region in RegionsConfig.allRegions()) {
             val world = server.getWorld(parseDimension(region.dimension)) ?: continue
             val box = RegionSpawnHelper.regionBoundingBox(region)
-            val entities = world.getEntitiesByClass(PokemonEntity::class.java, box) { entity ->
-                val data = entity.pokemon.persistentData
-                data.getString(RegionEntityTracker.REGION_KEY) == region.regionId
-            }
+            val entities = RegionEntityTracker.loadedManagedEntities(world, region.regionId, box)
 
             for (entity in entities) {
                 if (!entity.isRemoved) {
@@ -439,6 +436,21 @@ object CobbleSpawnRegions : ModInitializer {
 
     fun requestParticleUpdate(uuid: UUID) {
         particleUpdatePlayers.add(uuid)
+    }
+
+    fun refreshRuntimeAfterConfigReload(server: MinecraftServer) {
+        automaticSpawningReady = false
+        nextSpawnLoopCheckAtMs = 0L
+        RegionsConfig.lastSpawnTicks.clear()
+        SpawnPointScanner.clearQueue()
+
+        for (region in RegionsConfig.allRegions()) {
+            val world = server.getWorld(parseDimension(region.dimension)) ?: continue
+            RegionEntityTracker.rebuildFromWorld(world, region.regionId, RegionSpawnHelper.regionBoundingBox(region))
+        }
+
+        automaticSpawningReady = true
+        nextSpawnLoopCheckAtMs = 0L
     }
 
     fun requestParticleUpdate(player: ServerPlayerEntity, reason: String, logRequest: Boolean = false) {

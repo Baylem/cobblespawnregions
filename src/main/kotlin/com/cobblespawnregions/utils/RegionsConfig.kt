@@ -1,4 +1,4 @@
-package com.cobblespawnregions.utils
+﻿package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.api.pokemon.PokemonSpecies
 import com.cobblemon.mod.common.pokemon.Species
@@ -52,7 +52,8 @@ data class MovesSettings(
 data class CaptureSettings(
     var isCatchable: Boolean = true,
     var restrictCaptureToLimitedBalls: Boolean = false,
-    var requiredPokeBalls: List<String> = listOf("poke_ball")
+    var requiredPokeBalls: List<String> = listOf("poke_ball"),
+    var customRequiredPokeBalls: List<SerializableItemStack> = emptyList()
 )
 
 data class IVSettings(
@@ -133,10 +134,10 @@ data class RegionData(
     override val configId: String = "cobblespawnregions",
     val regionId: String = "",
     var regionName: String = "unnamed_region",
-    val pos1: SerializableBlockPos = SerializableBlockPos(),
-    val pos2: SerializableBlockPos = SerializableBlockPos(),
-    val dimension: String = "minecraft:overworld",
-    val mode: String = "COORDS",
+    var pos1: SerializableBlockPos = SerializableBlockPos(),
+    var pos2: SerializableBlockPos = SerializableBlockPos(),
+    var dimension: String = "minecraft:overworld",
+    var mode: String = "COORDS",
     var priority: Int = 0,
 
 
@@ -169,6 +170,7 @@ fun defaultCommandPermissions(): Map<String, String> = linkedMapOf(
     "create" to "cobblespawnregions.command.create",
     "list" to "cobblespawnregions.command.list",
     "delete" to "cobblespawnregions.command.delete",
+    "reclaim" to "cobblespawnregions.command.reclaim",
     "visualize" to "cobblespawnregions.command.visualize",
     "edit" to "cobblespawnregions.command.edit",
     "teleport" to "cobblespawnregions.command.teleport",
@@ -188,11 +190,13 @@ fun defaultCommandPermissions(): Map<String, String> = linkedMapOf(
     "check" to "cobblespawnregions.command.check",
     "editgui" to "cobblespawnregions.command.editgui",
     "reload" to "cobblespawnregions.command.reload",
+    "rescanspawnpoints" to "cobblespawnregions.command.rescanspawnpoints",
     "migratecobblespawners" to "cobblespawnregions.command.migratecobblespawners",
     "region" to "cobblespawnregions.command.region",
     "region.create" to "cobblespawnregions.command.region.create",
     "region.list" to "cobblespawnregions.command.region.list",
     "region.delete" to "cobblespawnregions.command.region.delete",
+    "region.reclaim" to "cobblespawnregions.command.region.reclaim",
     "region.visualize" to "cobblespawnregions.command.region.visualize",
     "region.editgui" to "cobblespawnregions.command.region.editgui",
     "region.teleport" to "cobblespawnregions.command.region.teleport",
@@ -583,6 +587,7 @@ object RegionsConfig {
         if (entry.spawnChanceType == null) entry.spawnChanceType = SpawnChanceType.COMPETITIVE
         if (entry.sizeSettings == null) entry.sizeSettings = SizeSettings()
         if (entry.captureSettings == null) entry.captureSettings = CaptureSettings()
+        if (entry.captureSettings.customRequiredPokeBalls == null) entry.captureSettings.customRequiredPokeBalls = emptyList()
         if (entry.ivSettings == null) entry.ivSettings = IVSettings()
         if (entry.evSettings == null) entry.evSettings = EVSettings()
         if (entry.spawnSettings == null) {

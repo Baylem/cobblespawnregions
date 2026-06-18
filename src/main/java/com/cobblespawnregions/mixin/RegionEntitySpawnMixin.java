@@ -2,6 +2,7 @@ package com.cobblespawnregions.mixin;
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity;
 import com.cobblemon.mod.common.pokemon.Pokemon;
+import com.cobblespawnregions.utils.ItemStackSerialization;
 import com.cobblespawnregions.utils.RegionExclusionHelper;
 import net.minecraft.entity.Entity;
 import net.minecraft.server.world.ServerWorld;
@@ -23,6 +24,7 @@ public class RegionEntitySpawnMixin {
 
     @Inject(method = "spawnEntity", at = @At("HEAD"), cancellable = true)
     private void filterPokemonSpawnByRegion(Entity entity, CallbackInfoReturnable<Boolean> cir) {
+        ItemStackSerialization.recordThrownBall(entity);
         if (!(entity instanceof PokemonEntity pokemonEntity)) return;
 
         Pokemon pokemon = pokemonEntity.getPokemon();

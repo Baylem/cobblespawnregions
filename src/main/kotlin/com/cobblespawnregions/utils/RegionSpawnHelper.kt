@@ -1,4 +1,4 @@
-package com.cobblespawnregions.utils
+﻿package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.api.moves.Moves
 import com.cobblemon.mod.common.api.pokemon.PokemonProperties
@@ -29,23 +29,6 @@ object RegionSpawnHelper {
     private val random: Random = Random.create()
     private val spawnAttemptLocks = ConcurrentHashMap<String, Any>()
     private val spawnBlockMatcherCache = ConcurrentHashMap<String, SpawnBlockMatcher>()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -139,16 +122,6 @@ object RegionSpawnHelper {
         spawned
         }
     }
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -561,22 +534,6 @@ object RegionSpawnHelper {
             true
         }.size
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     private fun isFlyingPosition(world: ServerWorld, pos: BlockPos): Boolean {

@@ -1,4 +1,4 @@
-package com.cobblespawnregions.gui
+﻿package com.cobblespawnregions.gui
 
 import com.cobblemon.mod.common.api.pokemon.PokemonProperties
 import com.cobblemon.mod.common.item.PokemonItem
@@ -76,7 +76,7 @@ object RegionPokemonEntryGui {
         aspects: Set<String>
     ) {
         if (RegionsConfig.getPokemonFromRegion(regionId, pokemonName, formName, aspects) == null) {
-            player.sendMessage(Text.literal("CSR entry not found."), false)
+            player.sendMessage(Text.literal("§c[CSR] §fEntry not found."), false)
             RegionPokemonSelectionGui.open(player, regionId)
             return
         }
