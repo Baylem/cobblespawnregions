@@ -11,3 +11,5 @@ data class RegionRestrictionConfig(
     var disableAll: Boolean = false,
     var excludeOwnedPokemon: Boolean = false
 )
+
+enum class RestrictionTarget { NATURAL_SPAWNS, RIDING }

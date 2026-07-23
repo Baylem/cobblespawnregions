@@ -2,7 +2,6 @@ package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
 import com.cobblespawnregions.mixin.MobEntityAccessor
-import net.minecraft.entity.mob.MobEntity
 import net.minecraft.server.MinecraftServer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -12,6 +11,10 @@ object RegionWanderingGoalManager {
     private val attached = ConcurrentHashMap.newKeySet<UUID>()
 
     fun attachIfConfigured(entity: PokemonEntity) {
+        if (!entity.pokemon.isWild()) {
+            attached.remove(entity.uuid)
+            return
+        }
         if (!attached.add(entity.uuid)) return
 
         val data = entity.pokemon.persistentData
@@ -31,7 +34,16 @@ object RegionWanderingGoalManager {
         }
 
         (entity as MobEntityAccessor).`cobblespawnregions$getGoalSelector`()
-            .add(0, StayInRegionGoal(entity as MobEntity, regionId, settings, entry.spawnSettings.allowedBlocks))
+            .add(
+                0,
+                StayInRegionGoal(
+                    entity,
+                    regionId,
+                    settings,
+                    entry.spawnSettings.allowedBlocks,
+                    entry.spawnSettings.customBlockSpawnModes
+                )
+            )
     }
 
     fun attachLoadedForEntry(server: MinecraftServer, regionId: String, entryKey: String) {

@@ -1,6 +1,7 @@
 ﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.utils.RegionRestrictionConfig
+import com.cobblespawnregions.utils.RestrictionTarget
 import com.cobblespawnregions.utils.RegionsConfig
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
@@ -29,46 +30,46 @@ object RegionNaturalSpawnGui {
         const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
     }
 
-    fun open(player: ServerPlayerEntity, regionId: String) {
+    fun open(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
         val region = RegionsConfig.getRegion(regionId) ?: run {
             player.sendMessage(Text.literal("§c[CSR] Region not found."), false)
             return
         }
         CustomGui.openGui(
             player,
-            "Natural - ${region.regionName}",
-            buildLayout(regionId),
-            { ctx -> handleClick(ctx, player, regionId) },
+            "${if (target == RestrictionTarget.RIDING) "Riding" else "Natural"} - ${region.regionName}",
+            buildLayout(regionId, target),
+            { ctx -> handleClick(ctx, player, regionId, target) },
             {}
         )
     }
 
-    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String) {
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
         when (ctx.slotIndex) {
-            Slots.DISABLE_ALL -> toggleRestriction(player, regionId) { it.disableAll = !it.disableAll }
-            Slots.EXCLUDE_OWNED -> toggleRestriction(player, regionId) { it.excludeOwnedPokemon = !it.excludeOwnedPokemon }
-            Slots.SPECIES -> RegionSpeciesBlocklistGui.open(player, regionId)
-            Slots.LABELS -> RegionLabelSelectorGui.open(player, regionId)
-            Slots.CONDITIONS -> RegionConditionScannerGui.open(player, regionId)
-            Slots.BACK -> RegionEditorGui.open(player, regionId)
+            Slots.DISABLE_ALL -> toggleRestriction(player, regionId, target) { it.disableAll = !it.disableAll }
+            Slots.EXCLUDE_OWNED -> toggleRestriction(player, regionId, target) { it.excludeOwnedPokemon = !it.excludeOwnedPokemon }
+            Slots.SPECIES -> RegionSpeciesBlocklistGui.open(player, regionId, target = target)
+            Slots.LABELS -> RegionLabelSelectorGui.open(player, regionId, target = target)
+            Slots.CONDITIONS -> RegionConditionScannerGui.open(player, regionId, target = target)
+            Slots.BACK -> RegionNaturalAndRidingGui.open(player, regionId)
         }
     }
 
-    private fun buildLayout(regionId: String): List<ItemStack> {
+    private fun buildLayout(regionId: String, target: RestrictionTarget): List<ItemStack> {
         val layout = MutableList(54) { filler() }
-        val restr = RegionsConfig.getRestriction(regionId) ?: return layout
+        val restr = RegionsConfig.getRestriction(regionId, target) ?: return layout
 
         for (i in 0..8) layout[i] = glass()
 
-        layout[Slots.DISABLE_ALL] = toggleItem("Disable Natural Spawns", restr.disableAll, listOf(
-            "§7Blocks every natural Pokemon spawn",
+        layout[Slots.DISABLE_ALL] = toggleItem(if (target == RestrictionTarget.RIDING) "Disable Riding" else "Disable Natural Spawns", restr.disableAll, listOf(
+            if (target == RestrictionTarget.RIDING) "§7Blocks riding matching Pokemon" else "§7Blocks every natural Pokemon spawn",
             "§7where this region controls the position.",
             "",
             "§eClick §7to toggle"
         ))
         layout[Slots.EXCLUDE_OWNED] = toggleItem("Exclude Owned Pokemon", restr.excludeOwnedPokemon, listOf(
             "§7When ON, player-owned Pokemon",
-            "§7bypass this region's restrictions.",
+            "§7bypass these ${if (target == RestrictionTarget.RIDING) "riding" else "spawn"} restrictions.",
             "",
             "§eClick §7to toggle"
         ))
@@ -79,19 +80,20 @@ object RegionNaturalSpawnGui {
         return layout
     }
 
-    private fun refresh(player: ServerPlayerEntity, regionId: String) {
-        CustomGui.refreshGui(player, buildLayout(regionId))
+    private fun refresh(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        CustomGui.refreshGui(player, buildLayout(regionId, target))
     }
 
     private fun toggleRestriction(
         player: ServerPlayerEntity,
         regionId: String,
+        target: RestrictionTarget,
         update: (RegionRestrictionConfig) -> Unit
     ) {
-        val restr = RegionsConfig.getRestriction(regionId) ?: return
+        val restr = RegionsConfig.getRestriction(regionId, target) ?: return
         update(restr)
         RegionsConfig.saveRegion(regionId)
-        refresh(player, regionId)
+        refresh(player, regionId, target)
     }
 
     private fun toggleItem(label: String, enabled: Boolean, lore: List<String>): ItemStack {

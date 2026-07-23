@@ -486,6 +486,12 @@ object RegionPokemonSettingsGui {
             if (balls.none { existing -> ItemStackSerialization.equivalent(existing, serialized) }) {
                 balls.add(serialized)
                 it.captureSettings.customRequiredPokeBalls = balls
+                val ballName = (cursor.item as? PokeBallItem)?.let { item -> Registries.ITEM.getId(item).path }
+                if (ballName != null) {
+                    it.captureSettings.requiredPokeBalls = it.captureSettings.requiredPokeBalls.filterNot { selected ->
+                        selected.equals(ballName, ignoreCase = true) || selected.equals("cobblemon:$ballName", ignoreCase = true)
+                    }
+                }
                 added = true
             }
         }

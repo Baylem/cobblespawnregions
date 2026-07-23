@@ -3,6 +3,7 @@
 import com.cobblemon.mod.common.api.pokemon.labels.CobblemonPokemonLabels
 import com.cobblespawnregions.utils.RegionRestrictionConfig
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.RestrictionTarget
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
@@ -91,39 +92,39 @@ object RegionLabelSelectorGui {
 
 
 
-    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0) {
+    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
         playerPages[player] = page
         val label = RegionsConfig.scopeLabel(regionId)
 
         CustomGui.openGui(
             player,
             "Excluded Labels — $label",
-            buildLayout(player, regionId),
-            { ctx -> handleClick(ctx, player, regionId) },
+            buildLayout(player, regionId, target),
+            { ctx -> handleClick(ctx, player, regionId, target) },
             {}
         )
     }
 
 
 
-    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String) {
-        val restr = RegionsConfig.getRestriction(regionId) ?: return
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        val restr = RegionsConfig.getRestriction(regionId, target) ?: return
         val page  = playerPages[player] ?: 0
         val labels = getAllLabels()
 
         when (ctx.slotIndex) {
             Slots.PREV -> if (page > 0) {
                 playerPages[player] = page - 1
-                refresh(player, regionId)
+                refresh(player, regionId, target)
             }
             Slots.NEXT -> if ((page + 1) * PAGE_SIZE < labels.size) {
                 playerPages[player] = page + 1
-                refresh(player, regionId)
+                refresh(player, regionId, target)
             }
-            Slots.BACK -> RegionNaturalSpawnGui.open(player, regionId)
+            Slots.BACK -> RegionNaturalSpawnGui.open(player, regionId, target)
             in 0 until PAGE_SIZE -> {
                 val idx = page * PAGE_SIZE + ctx.slotIndex
-                if (idx < labels.size) toggleLabel(restr, regionId, labels[idx], player)
+                if (idx < labels.size) toggleLabel(restr, regionId, labels[idx], player, target)
             }
         }
     }
@@ -132,7 +133,8 @@ object RegionLabelSelectorGui {
         restr: RegionRestrictionConfig,
         regionId: String,
         label: String,
-        player: ServerPlayerEntity
+        player: ServerPlayerEntity,
+        target: RestrictionTarget
     ) {
         if (label in restr.disallowedLabels) {
             restr.disallowedLabels.remove(label)
@@ -140,18 +142,18 @@ object RegionLabelSelectorGui {
             restr.disallowedLabels.add(label)
         }
         RegionsConfig.saveRegion(regionId)
-        refresh(player, regionId)
+        refresh(player, regionId, target)
     }
 
-    private fun refresh(player: ServerPlayerEntity, regionId: String) {
-        CustomGui.refreshGui(player, buildLayout(player, regionId))
+    private fun refresh(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        CustomGui.refreshGui(player, buildLayout(player, regionId, target))
     }
 
 
 
-    private fun buildLayout(player: ServerPlayerEntity, regionId: String): List<ItemStack> {
+    private fun buildLayout(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget): List<ItemStack> {
         val layout = MutableList(54) { filler() }
-        val restr  = RegionsConfig.getRestriction(regionId) ?: return layout
+        val restr  = RegionsConfig.getRestriction(regionId, target) ?: return layout
         val page   = playerPages[player] ?: 0
         val labels = getAllLabels()
         val blocked = restr.disallowedLabels

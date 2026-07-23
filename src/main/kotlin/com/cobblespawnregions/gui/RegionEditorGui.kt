@@ -62,7 +62,7 @@ object RegionEditorGui {
                 adjustPriority(player, regionId, delta)
             }
 
-            Slots.NATURAL -> RegionNaturalSpawnGui.open(player, regionId)
+            Slots.NATURAL -> RegionNaturalAndRidingGui.open(player, regionId)
             Slots.CUSTOM -> RegionUnnaturalSpawnGui.open(player, regionId)
 
             Slots.BACK -> RegionListGui.open(player)
@@ -143,7 +143,7 @@ object RegionEditorGui {
 
     private fun naturalSettingsItem(region: RegionData) = CustomGui.createPlayerHeadButton(
         "NaturalSettings",
-        Text.literal("Natural Spawn Settings").formatted(Formatting.GREEN),
+        Text.literal("Natural Spawns and Riding").formatted(Formatting.GREEN),
         listOf(
             Text.literal("§7Controls wild/natural Pokemon where"),
             Text.literal("§7this region wins priority."),
@@ -152,6 +152,9 @@ object RegionEditorGui {
             Text.literal("§7Blocked Species: §f${region.spawnRestrictions.disallowedSpecies.size}"),
             Text.literal("§7Labels: §f${region.spawnRestrictions.disallowedLabels.size}"),
             Text.literal("§7Conditions: §f${region.spawnRestrictions.exclusionConditions.size}"),
+            Text.literal("§7Riding Disabled: ${flag(region.ridingRestrictions.disableAll)}"),
+            Text.literal("§7Riding Species: §f${region.ridingRestrictions.disallowedSpecies.size}"),
+            Text.literal("§7Riding Conditions: §f${region.ridingRestrictions.exclusionConditions.size}"),
             Text.literal(""),
             Text.literal("§eClick §7to configure")
         ),

@@ -84,8 +84,16 @@ data class EVSettings(
 data class SpawnSettings(
     var spawnTime: String = "ALL",
     var spawnWeather: String = "ALL",
-    var allowedBlocks: List<String> = emptyList()
+    var allowedBlocks: List<String> = emptyList(),
+    var customBlockSpawnModes: Map<String, CustomBlockSpawnMode> = emptyMap()
 )
+
+enum class CustomBlockSpawnMode {
+    FLOOR,
+    AIR,
+    WATER,
+    BOTH
+}
 
 data class SizeSettings(
     var allowCustomSize: Boolean = false,
@@ -127,10 +135,26 @@ data class PokemonSpawnEntry(
     var maxSpawnCount: Int = 5,
 )
 
+const val REGION_POKEMON_DEFAULTS_KEY = "__region_pokemon_defaults__"
+
+fun createRegionPokemonDefaults() = PokemonSpawnEntry(
+    pokemonName = REGION_POKEMON_DEFAULTS_KEY,
+    spawnChance = 50.0,
+    spawnChanceType = SpawnChanceType.COMPETITIVE,
+    minLevel = 1,
+    maxLevel = 100,
+    spawnSettings = SpawnSettings(
+        spawnTime = "ALL",
+        spawnWeather = "ALL",
+        allowedBlocks = listOf("#solid", "#water", "#air")
+    ),
+    moves = MovesSettings(allowCustomInitialMoves = false, selectedMoves = emptyList())
+)
+
 
 
 data class RegionData(
-    override val version: String = "1.0.3",
+    override val version: String = "1.0.6",
     override val configId: String = "cobblespawnregions",
     val regionId: String = "",
     var regionName: String = "unnamed_region",
@@ -146,20 +170,23 @@ data class RegionData(
     var requirePlayerInRange: Boolean = false,
     var playerActivationRange: Double = 64.0,
     var selectedPokemon: MutableList<PokemonSpawnEntry> = mutableListOf(),
+    var defaultPokemonSettings: PokemonSpawnEntry = createRegionPokemonDefaults(),
 
     var spawnRestrictions: RegionRestrictionConfig = RegionRestrictionConfig(),
+    var ridingRestrictions: RegionRestrictionConfig = RegionRestrictionConfig(),
 
     var maxTotalSpawns: Int = 20
 ) : ConfigData
 
 data class RegionsMainConfig(
-    override val version: String = "1.0.3",
+    override val version: String = "1.0.6",
     override val configId: String = "cobblespawnregions",
     var debugEnabled: Boolean = false,
     var showUnimplementedPokemonInGui: Boolean = false,
     var showFormsInGui: Boolean = true,
     var showAspectsInGui: Boolean = true,
     var killTrackedPokemonOnServerStop: Boolean = false,
+    var claimItem: String = "minecraft:stick",
     var commandPermissions: MutableMap<String, String> = defaultCommandPermissions().toMutableMap()
 ) : ConfigData
 
@@ -211,7 +238,7 @@ object RegionsConfig {
 
     private val logger = LoggerFactory.getLogger("RegionsConfig")
     private const val MOD_ID = "cobblespawnregions"
-    private const val CURRENT_VERSION = "1.0.3"
+    private const val CURRENT_VERSION = "1.0.6"
 
     private val modConfigDir = File("config/cobblespawnregions")
     private val regionsDir = File(modConfigDir, "regions")
@@ -471,6 +498,7 @@ object RegionsConfig {
         aspects: Set<String> = emptySet()
     ): PokemonSpawnEntry? {
         val region = getRegion(regionId) ?: return null
+        if (pokemonName == REGION_POKEMON_DEFAULTS_KEY) return region.defaultPokemonSettings
         return region.selectedPokemon.find {
             it.pokemonName.equals(pokemonName, ignoreCase = true) &&
                     sameForm(it.formName, formName) &&
@@ -488,7 +516,7 @@ object RegionsConfig {
     ): PokemonSpawnEntry? {
         var result: PokemonSpawnEntry? = null
         updateRegion(regionId) { region ->
-            val entry = region.selectedPokemon.find {
+            val entry = if (pokemonName == REGION_POKEMON_DEFAULTS_KEY) region.defaultPokemonSettings else region.selectedPokemon.find {
                 it.pokemonName.equals(pokemonName, ignoreCase = true) &&
                         sameForm(it.formName, formName) &&
                         it.aspects.map { a -> a.lowercase() }.toSet() ==
@@ -538,6 +566,53 @@ object RegionsConfig {
         )
     }
 
+    fun createPokemonEntryFromRegionDefaults(
+        regionId: String,
+        pokemonName: String,
+        formName: String? = null,
+        aspects: Set<String> = emptySet()
+    ): PokemonSpawnEntry {
+        val region = getRegion(regionId) ?: throw IllegalArgumentException("Unknown region: $regionId")
+        return copyPokemonEntry(region.defaultPokemonSettings, pokemonName, formName, aspects)
+    }
+
+    fun copyDefaultsFromRegion(targetRegionId: String, sourceRegionId: String): Boolean {
+        val source = getRegion(sourceRegionId) ?: return false
+        return updateRegion(targetRegionId) { target ->
+            target.defaultPokemonSettings = copyPokemonEntry(
+                source.defaultPokemonSettings,
+                REGION_POKEMON_DEFAULTS_KEY,
+                null,
+                emptySet()
+            )
+        } != null
+    }
+
+    fun copyPokemonEntry(
+        source: PokemonSpawnEntry,
+        pokemonName: String = source.pokemonName,
+        formName: String? = source.formName,
+        aspects: Set<String> = source.aspects
+    ): PokemonSpawnEntry = source.copy(
+        pokemonName = pokemonName,
+        formName = formName,
+        aspects = aspects.toSet(),
+        sizeSettings = source.sizeSettings.copy(),
+        captureSettings = source.captureSettings.copy(
+            requiredPokeBalls = source.captureSettings.requiredPokeBalls.toList(),
+            customRequiredPokeBalls = source.captureSettings.customRequiredPokeBalls.toList()
+        ),
+        ivSettings = source.ivSettings.copy(),
+        evSettings = source.evSettings.copy(),
+        spawnSettings = source.spawnSettings.copy(
+            allowedBlocks = source.spawnSettings.allowedBlocks.toList(),
+            customBlockSpawnModes = source.spawnSettings.customBlockSpawnModes.toMap()
+        ),
+        wanderingSettings = source.wanderingSettings.copy(),
+        heldItemsOnSpawn = source.heldItemsOnSpawn.copy(itemsWithChance = source.heldItemsOnSpawn.itemsWithChance.toMap()),
+        moves = source.moves?.copy(selectedMoves = source.moves?.selectedMoves?.map { it.copy() }.orEmpty())
+    )
+
     fun getDefaultInitialMoves(species: Species): List<LeveledMove> {
         val list = mutableListOf<LeveledMove>()
         species.moves.levelUpMoves.forEach { (level, moves) ->
@@ -568,10 +643,14 @@ object RegionsConfig {
     private fun normalizeRegion(region: RegionData) {
         if (region.selectedPokemon == null) region.selectedPokemon = mutableListOf()
         if (region.spawnRestrictions == null) region.spawnRestrictions = RegionRestrictionConfig()
+        if (region.ridingRestrictions == null) region.ridingRestrictions = RegionRestrictionConfig()
+        if (region.defaultPokemonSettings == null) region.defaultPokemonSettings = createRegionPokemonDefaults()
         if (region.spawnAmountPerSpawn <= 0) region.spawnAmountPerSpawn = 1
         if (region.playerActivationRange < 0.0) region.playerActivationRange = 64.0
         normalizeRestrictions(region.spawnRestrictions)
+        normalizeRestrictions(region.ridingRestrictions)
         region.selectedPokemon.forEach(::normalizePokemonEntry)
+        normalizePokemonEntry(region.defaultPokemonSettings)
     }
 
     @Suppress("SENSELESS_COMPARISON")
@@ -592,6 +671,12 @@ object RegionsConfig {
         if (entry.evSettings == null) entry.evSettings = EVSettings()
         if (entry.spawnSettings == null) {
             entry.spawnSettings = SpawnSettings(allowedBlocks = listOf("#solid", "#water", "#air"))
+        }
+        if (entry.spawnSettings.allowedBlocks == null) {
+            entry.spawnSettings.allowedBlocks = emptyList()
+        }
+        if (entry.spawnSettings.customBlockSpawnModes == null) {
+            entry.spawnSettings.customBlockSpawnModes = emptyMap()
         }
         if (entry.wanderingSettings == null) entry.wanderingSettings = RegionWanderingSettings()
         entry.wanderingSettings.returnTarget = when (entry.wanderingSettings.returnTarget.uppercase()) {
@@ -633,6 +718,11 @@ object RegionsConfig {
     fun getRestriction(regionId: String): RegionRestrictionConfig? {
         val region = getRegion(regionId) ?: return null
         return region.spawnRestrictions
+    }
+
+    fun getRestriction(regionId: String, target: RestrictionTarget): RegionRestrictionConfig? {
+        val region = getRegion(regionId) ?: return null
+        return if (target == RestrictionTarget.RIDING) region.ridingRestrictions else region.spawnRestrictions
     }
 
     fun scopeLabel(regionId: String): String {

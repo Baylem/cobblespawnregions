@@ -1,6 +1,8 @@
 package com.cobblespawnregions.utils
 
+import com.cobblemon.mod.common.api.events.CobblemonEvents
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
+import com.cobblemon.mod.common.pokemon.Pokemon
 import com.google.gson.GsonBuilder
 import net.minecraft.server.world.ServerWorld
 import net.minecraft.util.math.ChunkPos
@@ -51,6 +53,12 @@ object RegionEntityTracker {
     private val saveLock = Any()
     private val dirty = AtomicBoolean(false)
 
+    fun registerEvents() {
+        CobblemonEvents.POKEMON_CAPTURED.subscribe { event ->
+            clearManagedData(event.pokemon)
+        }
+    }
+
     fun entryKey(entry: PokemonSpawnEntry): String {
         val aspects = entry.aspects.map { it.lowercase() }.sorted().joinToString(",")
         val form = entry.formName?.lowercase() ?: ""
@@ -79,6 +87,11 @@ object RegionEntityTracker {
     }
 
     fun trackLoadedEntity(entity: PokemonEntity): Boolean {
+        if (!entity.pokemon.isWild()) {
+            clearManagedData(entity.pokemon)
+            return false
+        }
+
         val data = entity.pokemon.persistentData
         val regionId = data.getString(REGION_KEY)
         val entryKey = data.getString(ENTRY_KEY)
@@ -189,6 +202,33 @@ object RegionEntityTracker {
     fun isManaged(entity: PokemonEntity): Boolean =
         entity.pokemon.persistentData.getString(REGION_KEY).isNotEmpty()
 
+    /**
+     * Region tracking describes a wild spawn, not the Pokemon after it has
+     * entered a trainer's storage. Capture preserves Pokemon persistent data,
+     * so remove our metadata once Cobblemon reports a successful capture.
+     */
+    fun clearManagedData(pokemon: Pokemon): Boolean {
+        val data = pokemon.persistentData
+        val regionId = data.getString(REGION_KEY)
+        if (regionId.isEmpty()) return false
+
+        val spawnId = data.getString(SPAWN_ID_KEY)
+        if (spawnId.isNotEmpty()) {
+            spawnRecords[spawnId]?.let { record ->
+                if (removeRecord(record)) markDirty()
+            }
+            liveUuidMap.entries.removeIf { it.value.spawnId == spawnId }
+        }
+
+        pokemon.entity?.let { entity ->
+            liveUuidMap.remove(entity.uuid)
+            RegionWanderingGoalManager.forget(entity.uuid)
+        }
+
+        MANAGED_DATA_KEYS.forEach(data::remove)
+        return true
+    }
+
     fun rebuildFromWorld(world: ServerWorld, regionId: String, regionBox: Box) {
         world.getEntitiesByClass(PokemonEntity::class.java, regionBox) { entity ->
             entity.pokemon.persistentData.getString(REGION_KEY) == regionId
@@ -288,4 +328,13 @@ object RegionEntityTracker {
         )
         trackerFile.writeText(gson.toJson(persisted))
     }
+
+    private val MANAGED_DATA_KEYS = listOf(
+        REGION_KEY,
+        ENTRY_KEY,
+        SPAWN_ID_KEY,
+        SPAWNED_AT_MS_KEY,
+        SPAWNED_AT_WORLD_TIME_KEY,
+        DIMENSION_KEY
+    )
 }

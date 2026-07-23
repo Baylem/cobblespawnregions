@@ -11,21 +11,32 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.LocalCapture;
 
 @Mixin(PokeBallItem.class)
 public class PokeBallItemMixin {
 
-    @Inject(method = "use", at = @At("HEAD"))
-    private void captureUsedPokeBallStack(World world, PlayerEntity player, Hand usedHand, CallbackInfoReturnable<TypedActionResult<ItemStack>> cir) {
-        if (!world.isClient()) {
-            ItemStackSerialization.beginThrow(player.getStackInHand(usedHand));
-        }
+    @Inject(
+            method = "use",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/cobblemon/mod/common/item/PokeBallItem;throwPokeBall(Lnet/minecraft/world/World;Lnet/minecraft/server/network/ServerPlayerEntity;)V"
+            ),
+            locals = LocalCapture.CAPTURE_FAILHARD
+    )
+    private void captureUsedPokeBallStack(World world, PlayerEntity player, Hand usedHand, CallbackInfoReturnable<TypedActionResult<ItemStack>> cir, ItemStack itemStack) {
+        ItemStackSerialization.beginThrow(itemStack);
     }
 
-    @Inject(method = "use", at = @At("RETURN"))
+    @Inject(
+            method = "use",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lcom/cobblemon/mod/common/item/PokeBallItem;throwPokeBall(Lnet/minecraft/world/World;Lnet/minecraft/server/network/ServerPlayerEntity;)V",
+                    shift = At.Shift.AFTER
+            )
+    )
     private void clearUsedPokeBallStack(World world, PlayerEntity player, Hand usedHand, CallbackInfoReturnable<TypedActionResult<ItemStack>> cir) {
-        if (!world.isClient()) {
-            ItemStackSerialization.endThrow();
-        }
+        ItemStackSerialization.endThrow();
     }
 }

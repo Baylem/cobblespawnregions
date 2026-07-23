@@ -102,7 +102,11 @@ object RegionSpawnHelper {
                 if (RegionEntityTracker.countForEntry(regionId, entryKey) >= entry.maxSpawnCount) return@repeat
             }
 
-            val pos = pickRandomSpawnPos(regionId, entry.spawnSettings.allowedBlocks) ?: run {
+            val pos = pickRandomSpawnPos(
+                regionId,
+                entry.spawnSettings.allowedBlocks,
+                entry.spawnSettings.customBlockSpawnModes
+            ) ?: run {
                 logDebug(
                     "No position matching allowedBlocks=${entry.spawnSettings.allowedBlocks} " +
                             "controlled by region '$regionId' for '${entry.pokemonName}'.", MOD_ID
@@ -264,13 +268,17 @@ object RegionSpawnHelper {
 
 
 
-    fun pickRandomSpawnPos(regionId: String, allowedBlocks: List<String>): BlockPos? {
+    fun pickRandomSpawnPos(
+        regionId: String,
+        allowedBlocks: List<String>,
+        customBlockSpawnModes: Map<String, CustomBlockSpawnMode> = emptyMap()
+    ): BlockPos? {
         val region = RegionsConfig.getRegion(regionId) ?: return null
         val floorCount = SpawnPointStore.size(regionId)
         if (floorCount == 0) return null
 
         val priorityRegions = RegionsConfig.regionsInPriorityOrder()
-        val matcher = matcherFor(allowedBlocks)
+        val matcher = matcherFor(allowedBlocks, customBlockSpawnModes)
 
         repeat(minOf(RANDOM_SPAWN_POS_ATTEMPTS, floorCount)) {
             var selected: Long? = null
@@ -310,12 +318,17 @@ object RegionSpawnHelper {
         return selected?.let(BlockPos::fromLong)
     }
 
-    fun pickClosestSpawnPos(regionId: String, allowedBlocks: List<String>, origin: net.minecraft.util.math.Vec3d): BlockPos? {
+    fun pickClosestSpawnPos(
+        regionId: String,
+        allowedBlocks: List<String>,
+        origin: net.minecraft.util.math.Vec3d,
+        customBlockSpawnModes: Map<String, CustomBlockSpawnMode> = emptyMap()
+    ): BlockPos? {
         val region = RegionsConfig.getRegion(regionId) ?: return null
         if (SpawnPointStore.size(regionId) == 0) return null
 
         val priorityRegions = RegionsConfig.regionsInPriorityOrder()
-        val matcher = matcherFor(allowedBlocks)
+        val matcher = matcherFor(allowedBlocks, customBlockSpawnModes)
         var closest: Long? = null
         var closestDistanceSq = Double.MAX_VALUE
 
@@ -351,33 +364,57 @@ object RegionSpawnHelper {
         return false
     }
 
-    private fun matcherFor(allowedBlocks: List<String>): SpawnBlockMatcher {
+    private fun matcherFor(
+        allowedBlocks: List<String>,
+        customBlockSpawnModes: Map<String, CustomBlockSpawnMode>
+    ): SpawnBlockMatcher {
         val normalized = allowedBlocks.map { it.lowercase() }
-        val key = if (normalized.isEmpty()) {
+        val normalizedModes = customBlockSpawnModes.mapKeys { it.key.lowercase() }
+        val blockKey = if (normalized.isEmpty()) {
             ""
         } else {
             normalized.asSequence()
                 .sorted()
                 .joinToString("|")
         }
-        return spawnBlockMatcherCache.computeIfAbsent(key) { SpawnBlockMatcher(normalized) }
+        val modeKey = normalizedModes.entries
+            .sortedBy { it.key }
+            .joinToString("|") { "${it.key}=${it.value.name}" }
+        val key = "$blockKey::$modeKey"
+        return spawnBlockMatcherCache.computeIfAbsent(key) {
+            SpawnBlockMatcher(normalized, normalizedModes)
+        }
     }
 
-    private class SpawnBlockMatcher(allowedBlocks: List<String>) {
+    private class SpawnBlockMatcher(
+        allowedBlocks: List<String>,
+        customBlockSpawnModes: Map<String, CustomBlockSpawnMode>
+    ) {
         private val allowAny = allowedBlocks.isEmpty()
         private val wantSolid = "#solid" in allowedBlocks
         private val wantWater = "#water" in allowedBlocks
         private val wantAir = "#air" in allowedBlocks
-        private val literalBlockIds = allowedBlocks
+        private val literalBlockModes = allowedBlocks
             .asSequence()
             .filter { !it.startsWith("#") }
-            .mapNotNull { Identifier.tryParse(it.lowercase()) }
-            .mapNotNull { Registries.BLOCK.get(it) }
-            .mapTo(HashSet()) { Registries.BLOCK.getRawId(it) }
+            .mapNotNull { blockId ->
+                val id = Identifier.tryParse(blockId.lowercase()) ?: return@mapNotNull null
+                val block = Registries.BLOCK.get(id)
+                Registries.BLOCK.getRawId(block) to
+                        (customBlockSpawnModes[blockId.lowercase()] ?: CustomBlockSpawnMode.FLOOR)
+            }
+            .toMap()
 
         fun matches(blockId: Int, type: SpawnType): Boolean {
             if (allowAny) return true
-            return blockId in literalBlockIds ||
+            val customMatch = literalBlockModes[blockId]?.let { mode ->
+                type == SpawnType.SOLID ||
+                        (type == SpawnType.AIR &&
+                                (mode == CustomBlockSpawnMode.AIR || mode == CustomBlockSpawnMode.BOTH)) ||
+                        (type == SpawnType.WATER &&
+                                (mode == CustomBlockSpawnMode.WATER || mode == CustomBlockSpawnMode.BOTH))
+            } == true
+            return customMatch ||
                     (wantAir && type == SpawnType.AIR) ||
                     (wantWater && type == SpawnType.WATER) ||
                     (wantSolid && type == SpawnType.SOLID)

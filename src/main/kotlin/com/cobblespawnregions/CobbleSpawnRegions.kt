@@ -74,6 +74,7 @@ object CobbleSpawnRegions : ModInitializer {
         RegionsConfig.initializeAndLoad()
         RegionsConfig.debugLog(logger, "Initializing CobbleSpawnRegions")
         RegionEntityTracker.loadFromDisk()
+        RegionEntityTracker.registerEvents()
         RegionCommands.register()
         battleTracker.registerEvents()
         catchingTracker.registerEvents()

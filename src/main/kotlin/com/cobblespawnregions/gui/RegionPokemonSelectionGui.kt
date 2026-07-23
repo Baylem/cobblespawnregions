@@ -63,6 +63,7 @@ object RegionPokemonSelectionGui {
         const val PREV = 45
         const val SORT = 48
         const val BACK = 49
+        const val DEFAULTS = 50
         const val NEXT = 53
     }
 
@@ -138,6 +139,7 @@ object RegionPokemonSelectionGui {
             }
             Slots.SORT -> handleSortClick(ctx, player, regionId)
             Slots.BACK -> RegionUnnaturalSpawnGui.open(player, regionId)
+            Slots.DEFAULTS -> RegionPokemonEntryGui.openDefaults(player, regionId)
             else       -> handlePokemonClick(ctx, player, regionId)
         }
     }
@@ -195,7 +197,7 @@ object RegionPokemonSelectionGui {
             player.sendMessage(Text.literal("§c[CSR] Removed ${species.name} from region."), false)
         } else {
             try {
-                val entry = RegionsConfig.createDefaultPokemonEntry(showdownId, formName, aspects)
+                val entry = RegionsConfig.createPokemonEntryFromRegionDefaults(regionId, showdownId, formName, aspects)
                 RegionsConfig.addPokemonToRegion(regionId, entry)
                 player.sendMessage(Text.literal("§a[CSR] Added ${species.name} to region."), false)
             } catch (e: IllegalArgumentException) {
@@ -237,7 +239,8 @@ object RegionPokemonSelectionGui {
         layout[Slots.NEXT] = if ((page + 1) * Constants.PAGE_SIZE < total) navBtn("Next", Textures.NEXT) else filler()
         layout[Slots.SORT] = sortBtn()
         layout[Slots.BACK] = backBtn()
-        listOf(46, 47, 50, 51, 52).forEach { layout[it] = filler() }
+        layout[Slots.DEFAULTS] = defaultsBtn()
+        listOf(46, 47, 51, 52).forEach { layout[it] = filler() }
 
         return layout
     }
@@ -502,6 +505,17 @@ object RegionPokemonSelectionGui {
         listOf(Text.literal("§7Return to Unnatural Spawn settings")),
         Textures.BACK
     )
+
+    private fun defaultsBtn() = ItemStack(Items.WRITABLE_BOOK).apply {
+        setCustomName(Text.literal("Default Pokémon Settings").formatted(Formatting.GOLD))
+        CustomGui.setItemLore(this, listOf(
+            "§7Applied once when a Pokémon is",
+            "§7first selected for this region.",
+            "§7Existing entries are not changed.",
+            "",
+            "§eClick §7to edit or clone defaults"
+        ))
+    }
 
     private fun filler() = ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply { setCustomName(Text.literal(" ")) }
 }

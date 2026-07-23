@@ -2,13 +2,16 @@ package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.api.pokemon.PokemonProperties
 import com.cobblemon.mod.common.api.pokemon.PokemonPropertyExtractor
+import com.cobblemon.mod.common.api.riding.RidingStyle
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
 import com.cobblemon.mod.common.pokemon.Pokemon
 import net.minecraft.server.network.ServerPlayerEntity
 import org.slf4j.LoggerFactory
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.reflect.KProperty1
 import kotlin.reflect.full.memberProperties
+import kotlin.reflect.jvm.isAccessible
 
 
 
@@ -35,6 +38,13 @@ object PokemonConditionExtractor {
 
     private val speciesConditionCache = ConcurrentHashMap<String, List<String>>()
 
+    /** Makes private Kotlin properties and Java backing fields readable when allowed. */
+    private fun readableProperties(obj: Any): Sequence<KProperty1<out Any, *>> =
+        obj::class.memberProperties.asSequence().onEach { property ->
+            property.isAccessible = true
+            property.getter.isAccessible = true
+        }
+
 
 
 
@@ -54,7 +64,7 @@ object PokemonConditionExtractor {
 
 
 
-    fun extractAllConditions(pokemon: Pokemon): List<String> {
+    fun extractExclusionConditions(pokemon: Pokemon): List<String> {
         val conditionList = mutableListOf<String>()
 
 
@@ -70,6 +80,17 @@ object PokemonConditionExtractor {
 
 
         conditionList.addAll(extractAllRaw(pokemon.form))
+
+        // These are separate in Cobblemon: autonomous flight is AI behaviour,
+        // while ridden movement is defined by the form's riding styles/seats.
+        val riding = pokemon.form.riding
+        val ridingStyles = riding.behaviours?.keys ?: emptySet()
+        conditionList.add("canfly=${pokemon.form.behaviour.moving.fly.canFly}")
+        conditionList.add("rideable=${riding.seats.isNotEmpty() && ridingStyles.isNotEmpty()}")
+        conditionList.add("rideair=${RidingStyle.AIR in ridingStyles}")
+        conditionList.add("rideland=${RidingStyle.LAND in ridingStyles}")
+        conditionList.add("rideliquid=${RidingStyle.LIQUID in ridingStyles}")
+        conditionList.add("rideseats=${riding.seats.size}")
 
 
         try {
@@ -96,6 +117,8 @@ object PokemonConditionExtractor {
             .sorted()
     }
 
+    fun extractAllConditions(pokemon: Pokemon): List<String> = extractExclusionConditions(pokemon)
+
 
 
 
@@ -112,7 +135,7 @@ object PokemonConditionExtractor {
             entity.setPosition(player.pos)
             world.spawnEntity(entity)
 
-            val conditions = extractAllConditions(entity.pokemon)
+            val conditions = extractExclusionConditions(entity.pokemon)
             entity.discard()
 
             speciesConditionCache[speciesName] = conditions
@@ -176,7 +199,7 @@ object PokemonConditionExtractor {
 
         for (propName in NAME_PROPERTIES) {
             try {
-                val prop = obj::class.memberProperties.find { it.name.equals(propName, ignoreCase = true) }
+                val prop = readableProperties(obj).find { it.name.equals(propName, ignoreCase = true) }
                 if (prop != null) {
                     val value = prop.getter.call(obj)
                     if (value != null && value is String && value.isNotBlank() && !value.contains("@")) {
@@ -201,7 +224,7 @@ object PokemonConditionExtractor {
 
 
         return try {
-            obj::class.memberProperties.firstNotNullOfOrNull { prop ->
+            readableProperties(obj).firstNotNullOfOrNull { prop ->
                 try {
                     val v = prop.getter.call(obj)
                     if (v is String && v.isNotBlank() && !v.contains("@") && v.length > 1 && v.length < 100) v
@@ -238,7 +261,7 @@ object PokemonConditionExtractor {
     internal fun extractAllRaw(obj: Any): List<String> {
         val results = mutableListOf<String>()
         try {
-            obj::class.memberProperties.forEach { prop ->
+            readableProperties(obj).forEach { prop ->
                 try {
                     val value = prop.getter.call(obj)
                     if (value != null) {

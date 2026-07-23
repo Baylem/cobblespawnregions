@@ -5,8 +5,10 @@
 	"mixins": [
       "MobEntityAccessor",
       "PokeBallItemMixin",
+      "PokemonEntityRideMixin",
       "RegionSpawnDisableMixin",
-      "RegionEntitySpawnMixin"
+      "RegionEntitySpawnMixin",
+      "RidingRegionBoundaryMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

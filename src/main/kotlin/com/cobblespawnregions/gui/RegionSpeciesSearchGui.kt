@@ -4,6 +4,7 @@ import com.everlastingutils.gui.AnvilGuiManager
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.FullyModularAnvilScreenHandler
 import com.everlastingutils.gui.setCustomName
+import com.cobblespawnregions.utils.RestrictionTarget
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.server.network.ServerPlayerEntity
@@ -26,7 +27,7 @@ object RegionSpeciesSearchGui {
         const val SEARCH = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOTY4M2RjN2JjNmRiZGI1ZGM0MzFmYmUyOGRjNGI5YWU2MjViOWU1MzE3YTI5ZjJjNGVjZmU3YmY1YWU1NmMzOCJ9fX0="
     }
 
-    fun open(player: ServerPlayerEntity, regionId: String) {
+    fun open(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
         val guiId = "csr_species_search_$regionId"
 
         AnvilGuiManager.openAnvilGui(
@@ -40,7 +41,7 @@ object RegionSpeciesSearchGui {
 
             onLeftClick  = {
 
-                goBack(player, regionId)
+                goBack(player, regionId, target)
             },
 
             onRightClick = null,
@@ -50,7 +51,7 @@ object RegionSpeciesSearchGui {
                 if (text.isNotBlank()) {
                     RegionSpeciesBlocklistGui.applySearch(player, text)
                 }
-                goBack(player, regionId)
+                goBack(player, regionId, target)
             },
 
             onTextChange = { text ->
@@ -62,7 +63,7 @@ object RegionSpeciesSearchGui {
 
                 player.server.execute {
                     if (player.currentScreenHandler !is FullyModularAnvilScreenHandler) {
-                        goBack(player, regionId)
+                        goBack(player, regionId, target)
                     }
                 }
             }
@@ -77,9 +78,9 @@ object RegionSpeciesSearchGui {
 
 
 
-    private fun goBack(player: ServerPlayerEntity, regionId: String) {
+    private fun goBack(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
         player.server.execute {
-            RegionSpeciesBlocklistGui.open(player, regionId, page = 0)
+            RegionSpeciesBlocklistGui.open(player, regionId, page = 0, target = target)
         }
     }
 

@@ -6,6 +6,7 @@ import com.cobblespawnregions.gui.pokemonsettings.RegionPokemonSettingsGui
 import com.cobblespawnregions.utils.RegionEntityTracker
 import com.cobblespawnregions.utils.RegionWanderingGoalManager
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.REGION_POKEMON_DEFAULTS_KEY
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
@@ -40,6 +41,7 @@ object RegionPokemonEntryGui {
         const val WANDER_TARGET = 30
         const val WANDER_SPEED = 31
         const val WANDER_DELAY = 32
+        const val CLONE_DEFAULTS = 40
 
         const val BACK = 49
     }
@@ -81,9 +83,10 @@ object RegionPokemonEntryGui {
             return
         }
 
+        val isDefaults = pokemonName == REGION_POKEMON_DEFAULTS_KEY
         CustomGui.openGui(
             player,
-            "${buildDisplayName(pokemonName, formName, aspects)} Settings",
+            if (isDefaults) "Default Pokémon Settings" else "${buildDisplayName(pokemonName, formName, aspects)} Settings",
             buildLayout(regionId, pokemonName, formName, aspects),
             { ctx -> handleClick(ctx, player, regionId, pokemonName, formName, aspects) },
             {}
@@ -132,6 +135,9 @@ object RegionPokemonEntryGui {
                 it.tickDelay = (it.tickDelay + delta).coerceIn(MIN_DELAY, MAX_DELAY)
             }
 
+            Slots.CLONE_DEFAULTS -> if (pokemonName == REGION_POKEMON_DEFAULTS_KEY) {
+                RegionPokemonDefaultsCloneGui.open(player, regionId)
+            }
             Slots.BACK -> RegionPokemonSelectionGui.open(player, regionId)
         }
     }
@@ -161,7 +167,7 @@ object RegionPokemonEntryGui {
         val entry = RegionsConfig.updatePokemonInRegion(regionId, pokemonName, formName, aspects) { entry ->
             update(entry.wanderingSettings)
         }
-        if (entry?.wanderingSettings?.enabled == true) {
+        if (pokemonName != REGION_POKEMON_DEFAULTS_KEY && entry?.wanderingSettings?.enabled == true) {
             RegionWanderingGoalManager.attachLoadedForEntry(player.server, regionId, RegionEntityTracker.entryKey(entry))
         }
         refresh(player, regionId, pokemonName, formName, aspects)
@@ -176,7 +182,8 @@ object RegionPokemonEntryGui {
         val entry = RegionsConfig.getPokemonFromRegion(regionId, pokemonName, formName, aspects)
         for (i in 0..8) layout[i] = purpleGlass()
 
-        layout[Slots.MON_DISPLAY] = monDisplayItem(pokemonName, formName, aspects)
+        val isDefaults = pokemonName == REGION_POKEMON_DEFAULTS_KEY
+        layout[Slots.MON_DISPLAY] = if (isDefaults) defaultsDisplayItem() else monDisplayItem(pokemonName, formName, aspects)
         layout[Slots.SPAWN_LEVEL] = menuButton("Spawn / Level", Formatting.DARK_AQUA, listOf("Edit spawn chance, chance type, and levels."), Textures.SPAWN)
         layout[Slots.IVS] = menuButton("IVs", Formatting.GREEN, listOf("Edit custom IV ranges."), Textures.IV)
         layout[Slots.EVS] = menuButton("EVs", Formatting.BLUE, listOf("Edit EVs awarded when defeated."), Textures.EV)
@@ -191,6 +198,7 @@ object RegionPokemonEntryGui {
         layout[Slots.WANDER_TARGET] = wanderTargetBtn(entry)
         layout[Slots.WANDER_SPEED] = wanderSpeedBtn(entry)
         layout[Slots.WANDER_DELAY] = wanderDelayBtn(entry)
+        if (isDefaults) layout[Slots.CLONE_DEFAULTS] = cloneDefaultsBtn()
         layout[Slots.BACK] = backBtn()
 
         return layout
@@ -203,6 +211,29 @@ object RegionPokemonEntryGui {
             lore.map { Text.literal("§7$it") } + Text.literal("§eClick to edit"),
             texture
         )
+
+    fun openDefaults(player: ServerPlayerEntity, regionId: String) {
+        open(player, regionId, REGION_POKEMON_DEFAULTS_KEY, null, emptySet())
+    }
+
+    private fun defaultsDisplayItem() = ItemStack(Items.WRITABLE_BOOK).apply {
+        setCustomName(Text.literal("§6§lRegional Pokémon Defaults"))
+        CustomGui.setItemLore(this, listOf(
+            "§7These settings are copied once",
+            "§7when a Pokémon is first selected.",
+            "§7Existing Pokémon remain unchanged."
+        ))
+    }
+
+    private fun cloneDefaultsBtn() = ItemStack(Items.CHEST).apply {
+        setCustomName(Text.literal("Clone From Other Region").formatted(Formatting.YELLOW))
+        CustomGui.setItemLore(this, listOf(
+            "§7Replace this region's defaults",
+            "§7with defaults from another region.",
+            "",
+            "§eClick §7to choose a region"
+        ))
+    }
 
     private fun monDisplayItem(pokemonName: String, formName: String?, aspects: Set<String>): ItemStack {
         return try {
@@ -226,7 +257,7 @@ object RegionPokemonEntryGui {
             "MaxSpawnCount",
             Text.literal("Max Spawn Count").formatted(Formatting.AQUA),
             listOf(
-                Text.literal("§7Max live ${pokemonName.replaceFirstChar(Char::titlecase)} in this region."),
+                Text.literal("§7Max live ${if (pokemonName == REGION_POKEMON_DEFAULTS_KEY) "Pokémon" else pokemonName.replaceFirstChar(Char::titlecase)} in this region."),
                 Text.literal("§eCurrent: §f$count §8(0 = unlimited)"),
                 Text.literal("§7Left-click: §a+1"),
                 Text.literal("§7Right-click: §c-1")

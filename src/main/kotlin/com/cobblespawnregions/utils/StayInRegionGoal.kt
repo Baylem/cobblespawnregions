@@ -1,17 +1,18 @@
 package com.cobblespawnregions.utils
 
+import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
 import net.minecraft.entity.ai.goal.Goal
-import net.minecraft.entity.mob.MobEntity
 import net.minecraft.util.math.BlockPos
 import net.minecraft.util.math.Vec3d
 import net.minecraft.world.Heightmap
 import java.util.EnumSet
 
 class StayInRegionGoal(
-    private val entity: MobEntity,
+    private val entity: PokemonEntity,
     private val regionId: String,
     private val settings: RegionWanderingSettings,
-    private val allowedBlocks: List<String>
+    private val allowedBlocks: List<String>,
+    private val customBlockSpawnModes: Map<String, CustomBlockSpawnMode>
 ) : Goal() {
 
     private var targetPos: Vec3d? = null
@@ -27,6 +28,7 @@ class StayInRegionGoal(
     }
 
     override fun canStart(): Boolean {
+        if (!entity.pokemon.isWild()) return false
         if (!settings.enabled) return false
         if (entity.world.time < nextPathAttemptTick) return false
 
@@ -58,12 +60,17 @@ class StayInRegionGoal(
     }
 
     override fun shouldContinue(): Boolean {
+        if (!entity.pokemon.isWild()) return false
         if (!settings.enabled) return false
         val region = cachedRegion ?: RegionsConfig.getRegion(regionId)?.also { cachedRegion = it } ?: return false
         return !RegionsConfig.contains(region, entity.blockPos)
     }
 
     override fun tick() {
+        if (!entity.pokemon.isWild()) {
+            entity.navigation.stop()
+            return
+        }
         val region = cachedRegion ?: RegionsConfig.getRegion(regionId)?.also { cachedRegion = it } ?: return
         if (RegionsConfig.contains(region, entity.blockPos)) return
 
@@ -127,7 +134,7 @@ class StayInRegionGoal(
             "CLOSEST" -> spawnPointNear(entity.pos) ?: closestTarget(region)
             else -> {
                 if (chooseNewRandom) {
-                    RegionSpawnHelper.pickRandomSpawnPos(regionId, allowedBlocks)?.let(Vec3d::ofBottomCenter)
+                    RegionSpawnHelper.pickRandomSpawnPos(regionId, allowedBlocks, customBlockSpawnModes)?.let(Vec3d::ofBottomCenter)
                         ?: randomTarget(region)
                         ?: centerTarget(region)
                 } else {
@@ -137,7 +144,7 @@ class StayInRegionGoal(
         }
 
     private fun spawnPointNear(origin: Vec3d): Vec3d? =
-        RegionSpawnHelper.pickClosestSpawnPos(regionId, allowedBlocks, origin)?.let(Vec3d::ofBottomCenter)
+        RegionSpawnHelper.pickClosestSpawnPos(regionId, allowedBlocks, origin, customBlockSpawnModes)?.let(Vec3d::ofBottomCenter)
 
     private fun randomTarget(region: RegionData): Vec3d? {
         val minX = minOf(region.pos1.x, region.pos2.x)

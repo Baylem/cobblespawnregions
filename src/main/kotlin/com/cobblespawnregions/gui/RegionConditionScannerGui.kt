@@ -5,6 +5,7 @@ import com.cobblemon.mod.common.item.PokemonItem
 import com.cobblemon.mod.common.pokemon.Species
 import com.cobblespawnregions.utils.PokemonConditionExtractor
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.RestrictionTarget
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
@@ -19,9 +20,13 @@ import java.util.concurrent.ConcurrentHashMap
 
 object RegionConditionScannerGui {
 
+    private enum class SortMethod { ALPHABETICAL, TYPE, SEARCH }
+
     private val logger = LoggerFactory.getLogger("RegionConditionScannerGui")
     private const val PAGE_SIZE = 45
     private val playerPages = ConcurrentHashMap<ServerPlayerEntity, Int>()
+    private val playerSortMethods = ConcurrentHashMap<ServerPlayerEntity, SortMethod>()
+    private val playerSearchTerms = ConcurrentHashMap<ServerPlayerEntity, String>()
 
     private val allSpecies: List<Species> by lazy {
         com.cobblemon.mod.common.api.pokemon.PokemonSpecies.species
@@ -30,8 +35,9 @@ object RegionConditionScannerGui {
 
     private object Slots {
         const val PREV      = 45
-        const val EXCLUDED  = 48
+        const val SORT      = 48
         const val BACK      = 49
+        const val EXCLUDED  = 50
         const val NEXT      = 53
     }
 
@@ -39,45 +45,58 @@ object RegionConditionScannerGui {
         const val PREV    = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTMzYWQ1YzIyZGIxNjQzNWRhYWQ2MTU5MGFiYTUxZDkzNzkxNDJkZDU1NmQ2YzQyMmE3MTEwY2EzYWJlYTUwIn19fQ=="
         const val NEXT    = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOGU0MDNjYzdiYmFjNzM2NzBiZDU0M2Y2YjA5NTViYWU3YjhlOTEyM2Q4M2JkNzYwZjYyMDRjNWFmZDhiZTdlMSJ9fX0="
         const val BACK    = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
-        const val TRASH   = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOTk4MWMwNmE1MzA0YzFjOTg4NjI1MTM5YzljNjBhNjdmMGI0NGE0ODc4NjE0NjNhMjViMjFiNjAwMmEyMyJ9fX0="
+        const val SORT    = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWI1ZWU0MTlhZDljMDYwYzE2Y2I1M2IxZGNmZmFjOGJhY2EwYjJhMjI2NWIxYjZjN2U4ZTc4MGMzN2IxMDRjMCJ9fX0="
     }
 
-    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0) {
+    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
         playerPages[player] = page
         val label = RegionsConfig.scopeLabel(regionId)
 
         CustomGui.openGui(
             player,
             "Scan Conditions — $label",
-            buildLayout(player, regionId),
-            { ctx -> handleClick(ctx, player, regionId) },
+            buildLayout(player, regionId, target),
+            { ctx -> handleClick(ctx, player, regionId, target) },
             { playerPages.remove(player) }
         )
     }
 
-    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String) {
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
         when (ctx.slotIndex) {
             Slots.PREV -> {
                 val page = (playerPages[player] ?: 0) - 1
-                if (page >= 0) { playerPages[player] = page; refresh(player, regionId) }
+                if (page >= 0) { playerPages[player] = page; refresh(player, regionId, target) }
             }
             Slots.NEXT -> {
                 val page = (playerPages[player] ?: 0) + 1
-                if (page * PAGE_SIZE < allSpecies.size) { playerPages[player] = page; refresh(player, regionId) }
+                if (page * PAGE_SIZE < speciesFor(player).size) { playerPages[player] = page; refresh(player, regionId, target) }
+            }
+            Slots.SORT -> if (ctx.button == 1) {
+                RegionConditionSpeciesSearchGui.open(player, regionId, target)
+            } else {
+                val next = when (playerSortMethods.getOrDefault(player, SortMethod.ALPHABETICAL)) {
+                    SortMethod.ALPHABETICAL -> SortMethod.TYPE
+                    SortMethod.TYPE, SortMethod.SEARCH -> SortMethod.ALPHABETICAL
+                }
+                playerSortMethods[player] = next
+                playerSearchTerms.remove(player)
+                playerPages[player] = 0
+                refresh(player, regionId, target)
             }
             Slots.EXCLUDED ->
-                RegionExcludedConditionsListGui.open(player, regionId)
-            Slots.BACK -> RegionNaturalSpawnGui.open(player, regionId)
-            in 0 until PAGE_SIZE -> scanSpecies(ctx.slotIndex, player, regionId)
+                RegionExcludedConditionsListGui.open(player, regionId, target = target)
+            Slots.BACK -> RegionNaturalSpawnGui.open(player, regionId, target)
+            in 0 until PAGE_SIZE -> scanSpecies(ctx.slotIndex, player, regionId, target)
         }
     }
 
-    private fun scanSpecies(slot: Int, player: ServerPlayerEntity, regionId: String) {
+    private fun scanSpecies(slot: Int, player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
         val page = playerPages[player] ?: 0
         val idx = page * PAGE_SIZE + slot
-        if (idx >= allSpecies.size) return
+        val availableSpecies = speciesFor(player)
+        if (idx >= availableSpecies.size) return
 
-        val species = allSpecies[idx]
+        val species = availableSpecies[idx]
 
         val filteredConditions = PokemonConditionExtractor.scanSpeciesForConditions(player, species.name)
 
@@ -89,29 +108,63 @@ object RegionConditionScannerGui {
             return
         }
 
-        RegionConditionSelectorGui.open(player, regionId, filteredConditions)
+        RegionConditionSelectorGui.open(player, regionId, filteredConditions, target = target)
     }
 
-    private fun refresh(player: ServerPlayerEntity, regionId: String) {
-        CustomGui.refreshGui(player, buildLayout(player, regionId))
+    private fun refresh(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        CustomGui.refreshGui(player, buildLayout(player, regionId, target))
     }
 
-    private fun buildLayout(player: ServerPlayerEntity, regionId: String): List<ItemStack> {
+    private fun buildLayout(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget): List<ItemStack> {
         val layout = MutableList(54) { filler() }
         val page = playerPages[player] ?: 0
+        val availableSpecies = speciesFor(player)
 
         val start = page * PAGE_SIZE
-        val end = minOf(start + PAGE_SIZE, allSpecies.size)
+        val end = minOf(start + PAGE_SIZE, availableSpecies.size)
         for (i in start until end) {
-            layout[i - start] = speciesItem(allSpecies[i])
+            layout[i - start] = speciesItem(availableSpecies[i])
         }
 
         if (page > 0)                            layout[Slots.PREV]     = navBtn("Previous Page", Textures.PREV)
-        if ((page + 1) * PAGE_SIZE < allSpecies.size) layout[Slots.NEXT]     = navBtn("Next Page", Textures.NEXT)
-        layout[Slots.EXCLUDED] = excludedBtn(regionId)
+        if ((page + 1) * PAGE_SIZE < availableSpecies.size) layout[Slots.NEXT] = navBtn("Next Page", Textures.NEXT)
+        layout[Slots.SORT] = sortBtn(player)
         layout[Slots.BACK]     = navBtn("Back", Textures.BACK)
+        layout[Slots.EXCLUDED] = excludedBtn(regionId, target)
 
         return layout
+    }
+
+    fun applySearch(player: ServerPlayerEntity, term: String, regionId: String, target: RestrictionTarget) {
+        playerSearchTerms[player] = term.trim()
+        playerSortMethods[player] = SortMethod.SEARCH
+        open(player, regionId, page = 0, target = target)
+    }
+
+    private fun speciesFor(player: ServerPlayerEntity): List<Species> {
+        val term = playerSearchTerms.getOrDefault(player, "")
+        return when (playerSortMethods.getOrDefault(player, SortMethod.ALPHABETICAL)) {
+            SortMethod.ALPHABETICAL -> allSpecies
+            SortMethod.TYPE -> allSpecies.sortedBy { it.primaryType.name }
+            SortMethod.SEARCH -> if (term.isBlank()) allSpecies
+                else allSpecies.filter { it.name.contains(term, ignoreCase = true) }
+        }
+    }
+
+    private fun sortBtn(player: ServerPlayerEntity): ItemStack {
+        val sort = playerSortMethods.getOrDefault(player, SortMethod.ALPHABETICAL)
+        val term = playerSearchTerms.getOrDefault(player, "")
+        val title = if (sort == SortMethod.SEARCH && term.isNotBlank())
+            "Searching: ${if (term.length > 12) term.take(9) + "..." else term}"
+        else "Sort: ${sort.name.lowercase().replaceFirstChar { it.uppercase() }}"
+        return CustomGui.createPlayerHeadButton(
+            "ConditionSort", Text.literal(title).formatted(Formatting.AQUA),
+            listOf(
+                Text.literal("§eLeft-click §7to cycle sort"),
+                Text.literal("§eRight-click §7to search by name")
+            ),
+            Textures.SORT
+        )
     }
 
 
@@ -138,8 +191,8 @@ object RegionConditionScannerGui {
     }
 
 
-    private fun excludedBtn(regionId: String): ItemStack {
-        val count = RegionsConfig.getRestriction(regionId)?.exclusionConditions?.size ?: 0
+    private fun excludedBtn(regionId: String, target: RestrictionTarget): ItemStack {
+        val count = RegionsConfig.getRestriction(regionId, target)?.exclusionConditions?.size ?: 0
         val item = ItemStack(Items.BARRIER)
         item.setCustomName(Text.literal("Excluded Conditions").formatted(Formatting.RED))
         CustomGui.setItemLore(item, listOf(

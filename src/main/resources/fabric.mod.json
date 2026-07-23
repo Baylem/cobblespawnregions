@@ -12,30 +12,20 @@
     },
     "license": "GNU Lesser General Public License v3",
 	"icon": "assets/cobblespawnregions/icon.png",
-	"environment": "*",
+	"environment": "server",
 	"entrypoints": {
 		"main": [
 			{
 				"value": "com.cobblespawnregions.CobbleSpawnRegions",
 				"adapter": "kotlin"
 			}
-		],
-		"client": [
-			{
-				"value": "com.cobblespawnregions.client.CobbleSpawnRegionsClient",
-				"adapter": "kotlin"
-			}
 		]
 	},
 	"mixins": [
-		"cobblespawnregions.mixins.json",
-		{
-			"config": "cobblespawnregions.client.mixins.json",
-			"environment": "client"
-		}
+		"cobblespawnregions.mixins.json"
 	],
 	"depends": {
-		"fabricloader": ">=0.18.6",
+		"fabricloader": ">=0.17.2",
 		"minecraft": "~1.21.1",
 		"java": ">=21",
 		"fabric-api": "*",

@@ -1,6 +1,7 @@
 ﻿package com.cobblespawnregions.gui
 
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.CustomBlockSpawnMode
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
@@ -12,6 +13,7 @@ import net.minecraft.server.network.ServerPlayerEntity
 import net.minecraft.text.Text
 import net.minecraft.util.Formatting
 import net.minecraft.util.Identifier
+import net.minecraft.util.ClickType
 
 
 
@@ -106,8 +108,20 @@ object RegionSpawnBlocksGui {
                         addBlockFromItem(player, regionId, pokemonName, formName, aspects, cursor)
 
 
-                    cursor.isEmpty && !ctx.clickedStack.isEmpty ->
-                        removeAtIndex(player, regionId, pokemonName, formName, aspects, ctx.slotIndex)
+                    cursor.isEmpty && !ctx.clickedStack.isEmpty -> {
+                        val entry = RegionsConfig.getPokemonFromRegion(regionId, pokemonName, formName, aspects)
+                            ?: return
+                        val blockId = entry.spawnSettings.allowedBlocks.getOrNull(ctx.slotIndex) ?: return
+                        if (ctx.clickType == ClickType.RIGHT && !blockId.startsWith("#")) {
+                            cycleCustomBlockMode(
+                                player, regionId, pokemonName, formName, aspects, blockId
+                            )
+                        } else if (ctx.clickType == ClickType.LEFT) {
+                            removeAtIndex(
+                                player, regionId, pokemonName, formName, aspects, ctx.slotIndex
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -195,11 +209,46 @@ object RegionSpawnBlocksGui {
             val list = e.spawnSettings.allowedBlocks.toMutableList()
             list.removeAt(slotIndex)
             e.spawnSettings.allowedBlocks = list
+            e.spawnSettings.customBlockSpawnModes =
+                e.spawnSettings.customBlockSpawnModes - removed.lowercase()
         }
         player.sendMessage(Text.literal("§c[CSR] Removed §f$removed§c."), false)
         player.server.execute {
             CustomGui.refreshGui(player, buildLayout(regionId, pokemonName, formName, aspects))
         }
+    }
+
+    private fun cycleCustomBlockMode(
+        player: ServerPlayerEntity,
+        regionId: String,
+        pokemonName: String,
+        formName: String?,
+        aspects: Set<String>,
+        blockId: String
+    ) {
+        var nextMode = CustomBlockSpawnMode.FLOOR
+        RegionsConfig.updatePokemonInRegion(regionId, pokemonName, formName, aspects) { entry ->
+            val key = blockId.lowercase()
+            val current = entry.spawnSettings.customBlockSpawnModes[key]
+                ?: CustomBlockSpawnMode.FLOOR
+            nextMode = when (current) {
+                CustomBlockSpawnMode.FLOOR -> CustomBlockSpawnMode.AIR
+                CustomBlockSpawnMode.AIR -> CustomBlockSpawnMode.WATER
+                CustomBlockSpawnMode.WATER -> CustomBlockSpawnMode.BOTH
+                CustomBlockSpawnMode.BOTH -> CustomBlockSpawnMode.FLOOR
+            }
+            entry.spawnSettings.customBlockSpawnModes =
+                if (nextMode == CustomBlockSpawnMode.FLOOR) {
+                    entry.spawnSettings.customBlockSpawnModes - key
+                } else {
+                    entry.spawnSettings.customBlockSpawnModes + (key to nextMode)
+                }
+        }
+        player.sendMessage(
+            Text.literal("§a[CSR] §f$blockId§a: §f${modeDescription(nextMode)}§a."),
+            false
+        )
+        CustomGui.refreshGui(player, buildLayout(regionId, pokemonName, formName, aspects))
     }
 
 
@@ -221,7 +270,11 @@ object RegionSpawnBlocksGui {
 
 
         blocks.forEachIndexed { i, blockId ->
-            if (i < CONTENT_SIZE) layout[i] = entryItem(blockId)
+            if (i < CONTENT_SIZE) {
+                val mode = entry?.spawnSettings?.customBlockSpawnModes?.get(blockId.lowercase())
+                    ?: CustomBlockSpawnMode.FLOOR
+                layout[i] = entryItem(blockId, mode)
+            }
         }
 
 
@@ -237,7 +290,7 @@ object RegionSpawnBlocksGui {
 
 
 
-    private fun entryItem(blockId: String): ItemStack {
+    private fun entryItem(blockId: String, mode: CustomBlockSpawnMode): ItemStack {
         val (item, coloredName) = when (blockId) {
             TOKEN_SOLID -> ItemStack(Items.STONE)               to "§7All Solid Blocks"
             TOKEN_WATER -> ItemStack(Items.WATER_BUCKET)        to "§9All Water Blocks"
@@ -253,8 +306,20 @@ object RegionSpawnBlocksGui {
         item.setCustomName(
             Text.literal("$coloredName §8($blockId)").styled { it.withItalic(false) }
         )
-        CustomGui.setItemLore(item, listOf(Text.literal("§eLeft-click §7to remove")))
+        val lore = mutableListOf(Text.literal("§eLeft-click §7to remove"))
+        if (!blockId.startsWith("#")) {
+            lore += Text.literal("§eRight-click §7to change above-block spawning")
+            lore += Text.literal("§7Mode: §f${modeDescription(mode)}")
+        }
+        CustomGui.setItemLore(item, lore)
         return item
+    }
+
+    private fun modeDescription(mode: CustomBlockSpawnMode): String = when (mode) {
+        CustomBlockSpawnMode.FLOOR -> "Floor only"
+        CustomBlockSpawnMode.AIR -> "Floor + air above"
+        CustomBlockSpawnMode.WATER -> "Floor + water above"
+        CustomBlockSpawnMode.BOTH -> "Floor + air and water above"
     }
 
     private fun addSolidBtn() = ItemStack(Items.STONE).apply {
@@ -298,7 +363,9 @@ object RegionSpawnBlocksGui {
             Text.literal(""),
             Text.literal("§eDrag §7a block from inventory into"),
             Text.literal("§7an empty slot to add a specific block."),
-            Text.literal("§eLeft-click §7a block to remove it.")
+            Text.literal("§eLeft-click §7a block to remove it."),
+            Text.literal("§eRight-click §7a custom block to cycle"),
+            Text.literal("§7floor/air/water/both modes.")
         ),
         Textures.INFO
     )

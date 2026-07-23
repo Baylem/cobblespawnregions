@@ -82,6 +82,14 @@ object RegionExclusionHelper {
         }
     }
 
+    @JvmStatic
+    fun shouldBlockRiding(pokemon: Pokemon, pos: BlockPos, dimension: String): Boolean {
+        val region = RegionsConfig.controllingRegionAt(pos, dimension) ?: return false
+        val config = region.ridingRestrictions
+        if (config.excludeOwnedPokemon && !pokemon.isWild()) return false
+        return config.disableAll || isPokemonExcluded(pokemon, config)
+    }
+
     private fun buildConditionSearchText(pokemon: Pokemon): String {
         val extractedStrings = PokemonConditionExtractor.extractAllConditions(pokemon)
         val propertyMap = PokemonConditionExtractor.buildPropertyMap(pokemon)

@@ -2,6 +2,7 @@
 
 import com.cobblespawnregions.utils.RegionRestrictionConfig
 import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.RestrictionTarget
 import com.everlastingutils.gui.CustomGui
 import com.everlastingutils.gui.InteractionContext
 import com.everlastingutils.gui.setCustomName
@@ -37,40 +38,40 @@ object RegionExcludedConditionsListGui {
         const val ENTRY = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYmViNTg4YjIxYTZmOThhZDFmZjRlMDg1YzU1MmRjYjA1MGVmYzljYWI0MjdmNDcyNjkwOTYxMjg5N2I5Zjk3In19fQ=="
     }
 
-    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0) {
+    fun open(player: ServerPlayerEntity, regionId: String, page: Int = 0, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
         playerPages[player] = page
         val label = RegionsConfig.scopeLabel(regionId)
 
         CustomGui.openGui(
             player,
             "Excluded Conditions — $label",
-            buildLayout(player, regionId),
-            { ctx -> handleClick(ctx, player, regionId) },
+            buildLayout(player, regionId, target),
+            { ctx -> handleClick(ctx, player, regionId, target) },
             {}
         )
     }
 
-    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String) {
-        val restr = RegionsConfig.getRestriction(regionId) ?: return
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        val restr = RegionsConfig.getRestriction(regionId, target) ?: return
         val conditions = restr.exclusionConditions
         val page = playerPages[player] ?: 0
 
         when (ctx.slotIndex) {
             Slots.PREV -> if (page > 0) {
                 playerPages[player] = page - 1
-                refresh(player, regionId)
+                refresh(player, regionId, target)
             }
             Slots.NEXT -> if ((page + 1) * PAGE_SIZE < conditions.size) {
                 playerPages[player] = page + 1
-                refresh(player, regionId)
+                refresh(player, regionId, target)
             }
-            Slots.BACK -> RegionConditionScannerGui.open(player, regionId)
+            Slots.BACK -> RegionConditionScannerGui.open(player, regionId, target = target)
             in 0 until PAGE_SIZE -> {
                 val idx = page * PAGE_SIZE + ctx.slotIndex
                 if (idx < conditions.size) {
                     val condition = conditions[idx]
                     if (condition is String) {
-                        removeCondition(restr, regionId, condition, player)
+                        removeCondition(restr, regionId, condition, player, target)
                     }
                 }
             }
@@ -82,20 +83,21 @@ object RegionExcludedConditionsListGui {
         restr: RegionRestrictionConfig,
         regionId: String,
         condition: String,
-        player: ServerPlayerEntity
+        player: ServerPlayerEntity,
+        target: RestrictionTarget
     ) {
         restr.exclusionConditions.remove(condition)
         RegionsConfig.saveRegion(regionId)
-        refresh(player, regionId)
+        refresh(player, regionId, target)
     }
 
-    private fun refresh(player: ServerPlayerEntity, regionId: String) {
-        CustomGui.refreshGui(player, buildLayout(player, regionId))
+    private fun refresh(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget) {
+        CustomGui.refreshGui(player, buildLayout(player, regionId, target))
     }
 
-    private fun buildLayout(player: ServerPlayerEntity, regionId: String): List<ItemStack> {
+    private fun buildLayout(player: ServerPlayerEntity, regionId: String, target: RestrictionTarget): List<ItemStack> {
         val layout = MutableList(54) { filler() }
-        val restr  = RegionsConfig.getRestriction(regionId) ?: return layout
+        val restr  = RegionsConfig.getRestriction(regionId, target) ?: return layout
         val page   = playerPages[player] ?: 0
         val conditions = restr.exclusionConditions
 

@@ -14,6 +14,7 @@ import net.minecraft.component.type.NbtComponent
 import net.minecraft.item.ItemStack
 import net.minecraft.item.Items
 import net.minecraft.nbt.NbtCompound
+import net.minecraft.registry.Registries
 import net.minecraft.registry.RegistryKey
 import net.minecraft.registry.RegistryKeys
 import net.minecraft.server.command.ServerCommandSource
@@ -121,7 +122,7 @@ object RegionCommands {
         }
 
         subcommand("visualize", permission = permission("visualize")) {
-            then(regionIdArg().executes { ctx ->
+            then(visualizationRegionArg().executes { ctx ->
                 val player = playerOrError(ctx.source) ?: return@executes 0
                 toggleVisualization(player, ctx.source, StringArgumentType.getString(ctx, "regionId"))
             })
@@ -149,8 +150,8 @@ object RegionCommands {
         }
 
         subcommand("killspawned", permission = permission("killspawned")) {
-            then(regionIdArg().executes { ctx ->
-                killSpawnedInRegion(ctx.source, StringArgumentType.getString(ctx, "regionId"))
+            then(killSpawnTargetArg().executes { ctx ->
+                killSpawned(ctx.source, StringArgumentType.getString(ctx, "regionId"))
             }.then(RequiredArgumentBuilder.argument<ServerCommandSource, String>("mode", StringArgumentType.word())
                 .suggests { _, builder ->
                     builder.suggest("loaded")
@@ -158,7 +159,7 @@ object RegionCommands {
                     builder.buildFuture()
                 }
                 .executes { ctx ->
-                    killSpawnedInRegion(
+                    killSpawned(
                         ctx.source,
                         StringArgumentType.getString(ctx, "regionId"),
                         StringArgumentType.getString(ctx, "mode")
@@ -320,7 +321,7 @@ object RegionCommands {
         }
 
         subcommand("visualize", permission = permission("region.visualize")) {
-            then(regionIdArg().executes { ctx ->
+            then(visualizationRegionArg().executes { ctx ->
                 val player = playerOrError(ctx.source) ?: return@executes 0
                 toggleVisualization(player, ctx.source, StringArgumentType.getString(ctx, "regionId"))
             })
@@ -348,8 +349,8 @@ object RegionCommands {
         }
 
         subcommand("killspawned", permission = permission("region.killspawned")) {
-            then(regionIdArg().executes { ctx ->
-                killSpawnedInRegion(ctx.source, StringArgumentType.getString(ctx, "regionId"))
+            then(killSpawnTargetArg().executes { ctx ->
+                killSpawned(ctx.source, StringArgumentType.getString(ctx, "regionId"))
             })
         }
 
@@ -411,6 +412,10 @@ object RegionCommands {
     }
 
     private fun toggleVisualization(player: ServerPlayerEntity, source: ServerCommandSource, regionId: String): Int {
+        if (regionId.equals("ALL", ignoreCase = true)) {
+            return toggleAllVisualizations(player, source)
+        }
+
         val region = RegionsConfig.getRegion(regionId) ?: run {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
@@ -430,6 +435,30 @@ object RegionCommands {
             player.sendMessage(Text.literal(
                 "§a[CSR] §fVisualizing §e${region.regionName} §7(priority ${region.priority})§f."
             ), false)
+        }
+        return 1
+    }
+
+    private fun toggleAllVisualizations(player: ServerPlayerEntity, source: ServerCommandSource): Int {
+        val regionIds = RegionsConfig.regions.keys.toSet()
+        if (regionIds.isEmpty()) {
+            source.sendError(Text.literal("No regions are configured."))
+            return 0
+        }
+
+        val active = CobbleSpawnRegions.activeVisualizations
+            .computeIfAbsent(player.uuid) { ConcurrentHashMap.newKeySet() }
+        val allVisible = active.containsAll(regionIds)
+
+        if (allVisible) {
+            active.removeAll(regionIds)
+            if (active.isEmpty()) CobbleSpawnRegions.activeVisualizations.remove(player.uuid)
+            CobbleSpawnRegions.requestParticleUpdate(player, "stopped visualizing all regions", logRequest = true)
+            player.sendMessage(Text.literal("§a[CSR] §fStopped visualizing §eall regions§f."), false)
+        } else {
+            active.addAll(regionIds)
+            CobbleSpawnRegions.requestParticleUpdate(player, "started visualizing all regions", logRequest = true)
+            player.sendMessage(Text.literal("§a[CSR] §fVisualizing §eall ${regionIds.size} regions§f."), false)
         }
         return 1
     }
@@ -470,17 +499,56 @@ object RegionCommands {
         return 1
     }
 
+    private fun killSpawned(source: ServerCommandSource, regionId: String, mode: String = "loaded"): Int {
+        if (regionId.equals("all", ignoreCase = true)) {
+            return killSpawnedInAllRegions(source, mode)
+        }
+        return killSpawnedInRegion(source, regionId, mode)
+    }
+
+    private fun killSpawnedInAllRegions(source: ServerCommandSource, mode: String): Int {
+        val normalizedMode = normalizedKillMode(source, mode) ?: return 0
+        val regions = RegionsConfig.regions.values.toList()
+        if (regions.isEmpty()) {
+            source.sendError(Text.literal("No regions are configured."))
+            return 0
+        }
+
+        var killed = 0
+        regions.forEach { region ->
+            val world = worldForRegion(source, region) ?: return@forEach
+            val spawned = RegionEntityTracker.loadedManagedEntities(
+                world,
+                region.regionId,
+                RegionSpawnHelper.regionBoundingBox(region)
+            )
+            spawned.forEach { entity ->
+                RegionWanderingGoalManager.forget(entity.uuid)
+                RegionEntityTracker.untrack(entity.uuid)
+                entity.discard()
+            }
+            killed += spawned.size
+            if (normalizedMode == "tracked" || normalizedMode == "all") {
+                RegionEntityTracker.clearRegion(region.regionId)
+            }
+        }
+        RegionEntityTracker.flushIfDirty()
+
+        val remainingTracked = regions.sumOf { RegionEntityTracker.countTotal(it.regionId) }
+        source.sendMessage(Text.literal(
+            "§a[CSR] §fKilled §e$killed §floaded spawned Pokemon across §e${regions.size} regions§f. " +
+                    "§7Tracked remaining: §f$remainingTracked§7."
+        ))
+        return 1
+    }
+
     private fun killSpawnedInRegion(source: ServerCommandSource, regionId: String, mode: String = "loaded"): Int {
         val region = RegionsConfig.getRegion(regionId) ?: run {
             source.sendError(Text.literal("No region found with id '$regionId'."))
             return 0
         }
         val world = worldForRegion(source, region) ?: return 0
-        val normalizedMode = mode.lowercase()
-        if (normalizedMode != "loaded" && normalizedMode != "tracked" && normalizedMode != "all") {
-            source.sendError(Text.literal("Unknown kill mode '$mode'. Use: loaded or tracked."))
-            return 0
-        }
+        val normalizedMode = normalizedKillMode(source, mode) ?: return 0
         val box = RegionSpawnHelper.regionBoundingBox(region)
 
         val spawned = RegionEntityTracker.loadedManagedEntities(world, regionId, box)
@@ -503,6 +571,13 @@ object RegionCommands {
         return 1
     }
 
+    private fun normalizedKillMode(source: ServerCommandSource, mode: String): String? {
+        val normalized = mode.lowercase()
+        if (normalized in setOf("loaded", "tracked", "all")) return normalized
+        source.sendError(Text.literal("Unknown kill mode '$mode'. Use: loaded or tracked."))
+        return null
+    }
+
     private fun addPokemon(
         source: ServerCommandSource,
         regionId: String,
@@ -516,7 +591,7 @@ object RegionCommands {
         }
 
         val entry = try {
-            RegionsConfig.createDefaultPokemonEntry(pokemonName, formName, aspects)
+            RegionsConfig.createPokemonEntryFromRegionDefaults(regionId, pokemonName, formName, aspects)
         } catch (e: IllegalArgumentException) {
             RegionsConfig.debugError(logger, "Failed to create Pokemon entry for command addmon: $pokemonName", e)
             source.sendError(Text.literal(e.message ?: "Unknown Pokemon '$pokemonName'."))
@@ -579,13 +654,29 @@ object RegionCommands {
 
         val pokemon = nearest.pokemon
         val data = pokemon.persistentData
-        val conditions = PokemonConditionExtractor.extractAllConditions(pokemon)
+        val conditions = PokemonConditionExtractor.extractExclusionConditions(pokemon)
+        logger.info(
+            "[CSR inspectnearest] {} (level {}, form {}, UUID {}) — {} exclusion conditions:",
+            pokemon.species.name,
+            pokemon.level,
+            pokemon.form.name,
+            nearest.uuid,
+            conditions.size
+        )
+        conditions.forEach { condition ->
+            logger.info("[CSR inspectnearest] {}", condition)
+        }
+        logger.info("[CSR inspectnearest] End of conditions for {}", nearest.uuid)
+
         source.sendMessage(Text.literal("§a[CSR] §fNearest Pokemon: §e${pokemon.species.name} §7lv ${pokemon.level}"))
         source.sendMessage(Text.literal("§7UUID: §f${nearest.uuid}"))
         source.sendMessage(Text.literal("§7Form: §f${pokemon.form.name} §7Aspects: §f${pokemon.aspects.joinToString(", ").ifEmpty { "none" }}"))
         source.sendMessage(Text.literal("§7Managed Region: §f${data.getString(RegionEntityTracker.REGION_KEY).ifEmpty { "none" }}"))
-        source.sendMessage(Text.literal("§7Conditions (${conditions.size}): §f${conditions.take(20).joinToString(", ")}"))
-        if (conditions.size > 20) source.sendMessage(Text.literal("§8...and ${conditions.size - 20} more."))
+        source.sendMessage(Text.literal("§7Exclusion Conditions (${conditions.size}):"))
+        source.sendMessage(Text.literal("§8Complete list also written to the server console."))
+        conditions.chunked(10).forEach { batch ->
+            source.sendMessage(Text.literal("§f${batch.joinToString(", ")}"))
+        }
         return 1
     }
 
@@ -671,12 +762,20 @@ object RegionCommands {
             requirePlayerInRange = sourceRegion.requirePlayerInRange,
             playerActivationRange = sourceRegion.playerActivationRange,
             selectedPokemon = sourceRegion.selectedPokemon.map(::copyPokemonEntry).toMutableList(),
+            defaultPokemonSettings = RegionsConfig.copyPokemonEntry(sourceRegion.defaultPokemonSettings),
             spawnRestrictions = RegionRestrictionConfig(
                 disallowedSpecies = sourceRegion.spawnRestrictions.disallowedSpecies.toMutableList(),
                 disallowedLabels = sourceRegion.spawnRestrictions.disallowedLabels.toMutableList(),
                 exclusionConditions = sourceRegion.spawnRestrictions.exclusionConditions.toMutableList(),
                 disableAll = sourceRegion.spawnRestrictions.disableAll,
                 excludeOwnedPokemon = sourceRegion.spawnRestrictions.excludeOwnedPokemon
+            ),
+            ridingRestrictions = RegionRestrictionConfig(
+                disallowedSpecies = sourceRegion.ridingRestrictions.disallowedSpecies.toMutableList(),
+                disallowedLabels = sourceRegion.ridingRestrictions.disallowedLabels.toMutableList(),
+                exclusionConditions = sourceRegion.ridingRestrictions.exclusionConditions.toMutableList(),
+                disableAll = sourceRegion.ridingRestrictions.disableAll,
+                excludeOwnedPokemon = sourceRegion.ridingRestrictions.excludeOwnedPokemon
             ),
             maxTotalSpawns = sourceRegion.maxTotalSpawns
         )
@@ -790,7 +889,15 @@ object RegionCommands {
     }
 
     private fun giveStick(player: ServerPlayerEntity, source: ServerCommandSource, mode: StickMode): Int {
-        val stick = ItemStack(Items.STICK, 1)
+        val configuredId = RegionsConfig.config.claimItem
+        val itemId = Identifier.tryParse(configuredId)
+        val claimItem = if (itemId != null && Registries.ITEM.containsId(itemId)) {
+            Registries.ITEM.get(itemId)
+        } else {
+            logger.warn("Invalid claimItem '{}' in config; using minecraft:stick", configuredId)
+            Items.STICK
+        }
+        val stick = ItemStack(claimItem, 1)
 
         val (label, plainName) = when (mode) {
             StickMode.CHUNK -> "§bChunk Claim Stick" to "Chunk Claim Stick"
@@ -912,6 +1019,22 @@ object RegionCommands {
                 builder.buildFuture()
             }!!
 
+    private fun visualizationRegionArg() =
+        RequiredArgumentBuilder.argument<ServerCommandSource, String>("regionId", StringArgumentType.word())
+            .suggests { _, builder ->
+                builder.suggest("ALL")
+                RegionsConfig.regions.keys.forEach { builder.suggest(it) }
+                builder.buildFuture()
+            }!!
+
+    private fun killSpawnTargetArg() =
+        RequiredArgumentBuilder.argument<ServerCommandSource, String>("regionId", StringArgumentType.word())
+            .suggests { _, builder ->
+                builder.suggest("ALL")
+                RegionsConfig.regions.keys.forEach { builder.suggest(it) }
+                builder.buildFuture()
+            }!!
+
     private fun selectionBounds(
         player: ServerPlayerEntity,
         source: ServerCommandSource
@@ -946,7 +1069,10 @@ object RegionCommands {
             ),
             ivSettings = entry.ivSettings.copy(),
             evSettings = entry.evSettings.copy(),
-            spawnSettings = entry.spawnSettings.copy(allowedBlocks = entry.spawnSettings.allowedBlocks.toList()),
+            spawnSettings = entry.spawnSettings.copy(
+                allowedBlocks = entry.spawnSettings.allowedBlocks.toList(),
+                customBlockSpawnModes = entry.spawnSettings.customBlockSpawnModes.toMap()
+            ),
             wanderingSettings = entry.wanderingSettings.copy(),
             heldItemsOnSpawn = entry.heldItemsOnSpawn.copy(itemsWithChance = entry.heldItemsOnSpawn.itemsWithChance.toMap()),
             moves = entry.moves?.copy(selectedMoves = entry.moves?.selectedMoves?.map { it.copy() }.orEmpty())
