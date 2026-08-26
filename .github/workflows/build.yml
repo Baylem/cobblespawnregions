@@ -86,9 +86,9 @@ jobs:
           name: jars
           path: jars
 
-      # One release per tag, carrying BOTH loader jars. collectJars mirrors
-      # fabric/ and neoforge/ into build/release, the build job uploads them as
-      # a single `jars` artifact, and this attaches all of them to one release.
+      # One release per tag carrying both loader jars: collectJars mirrors
+      # fabric/ and neoforge/ into build/release, the build job uploads them
+      # as a single `jars` artifact, and this attaches all of them here.
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
@@ -98,10 +98,7 @@ jobs:
           draft: true
           fail_on_unmatched_files: true
           body: |
-            Built from one shared source tree. Both loader jars are attached to
-            this release.
-
-            | Loader | Jar |
+            | Loader | File |
             |---|---|
             | Fabric | `cobblespawnregions-fabric-<version>.jar` |
             | NeoForge | `cobblespawnregions-neoforge-<version>.jar` |
