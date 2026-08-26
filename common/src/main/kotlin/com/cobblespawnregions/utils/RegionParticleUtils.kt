@@ -182,7 +182,7 @@ object RegionParticleUtils {
                         entity.xRot, entity.yRot, entity.type, 0, entity.deltaMovement, 0.0
                     )
                 )
-                val entries = entity.entityData.packDirty()
+                val entries = entity.entityData.nonDefaultValues
                 if (entries != null) {
                     player.connection.send(ClientboundSetEntityDataPacket(entity.id, entries))
                 }
@@ -199,7 +199,7 @@ object RegionParticleUtils {
                 val req = requests[i]
                 applyTransformation(entity, req, state.basePos)
                 Platform.INSTANCE.setDisplayBlockState(entity, req.state)
-                val entries = entity.entityData.packDirty()
+                val entries = entity.entityData.nonDefaultValues
                 if (entries != null) {
                     player.connection.send(ClientboundSetEntityDataPacket(entity.id, entries))
                 }
