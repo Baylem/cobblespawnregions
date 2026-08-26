@@ -6,9 +6,9 @@ import com.cobblemon.mod.common.api.events.pokeball.ThrownPokeballHitEvent
 import com.cobblemon.mod.common.api.pokeball.catching.CaptureContext
 import com.cobblemon.mod.common.entity.pokeball.EmptyPokeBallEntity
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
+import com.cobblespawnregions.platform.Platform
 import com.google.gson.JsonElement
 import com.mojang.serialization.JsonOps
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
 import net.minecraft.world.entity.item.ItemEntity
 import net.minecraft.world.item.ItemStack
 import net.minecraft.resources.RegistryOps
@@ -48,7 +48,7 @@ class RegionCatchingTracker {
             handlePokeBallCaptureCalculated(event)
         }
 
-        ServerTickEvents.END_SERVER_TICK.register {
+        Platform.INSTANCE.onServerTick {
             val mapIterator = playerTrackingMap.entries.iterator()
             while (mapIterator.hasNext()) {
                 val entry = mapIterator.next()

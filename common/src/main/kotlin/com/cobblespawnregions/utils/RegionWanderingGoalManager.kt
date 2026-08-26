@@ -1,7 +1,7 @@
 package com.cobblespawnregions.utils
 
 import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
-import com.cobblespawnregions.mixin.MobEntityAccessor
+import com.cobblespawnregions.platform.Platform
 import net.minecraft.server.MinecraftServer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -33,7 +33,7 @@ object RegionWanderingGoalManager {
             return
         }
 
-        (entity as MobEntityAccessor).`cobblespawnregions$getGoalSelector`()
+        Platform.INSTANCE.goalSelector(entity)
             .addGoal(
                 0,
                 StayInRegionGoal(

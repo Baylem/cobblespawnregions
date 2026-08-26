@@ -10,9 +10,9 @@ import com.cobblemon.mod.common.battles.BattleRegistry
 import com.cobblemon.mod.common.battles.actor.PlayerBattleActor
 import com.cobblemon.mod.common.battles.actor.PokemonBattleActor
 import com.cobblemon.mod.common.pokemon.Pokemon
+import com.cobblespawnregions.platform.Platform
 import com.everlastingutils.scheduling.SchedulerManager
 import com.everlastingutils.utils.logDebug
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
 import java.util.UUID
@@ -66,8 +66,8 @@ class RegionBattleTracker {
                 finishBattle(it, BattleEndCause.CAPTURED, applyValues = false)
             }
         }
-        ServerPlayConnectionEvents.DISCONNECT.register { handler, _ ->
-            findBattleIdByPlayer(handler.player)?.let {
+        Platform.INSTANCE.onPlayerDisconnect { player ->
+            findBattleIdByPlayer(player)?.let {
                 finishBattle(it, BattleEndCause.UNKNOWN, applyValues = false)
             }
         }

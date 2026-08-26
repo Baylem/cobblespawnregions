@@ -16,7 +16,7 @@
 	"entrypoints": {
 		"main": [
 			{
-				"value": "com.cobblespawnregions.CobbleSpawnRegions",
+				"value": "com.cobblespawnregions.fabric.CobbleSpawnRegionsFabric",
 				"adapter": "kotlin"
 			}
 		]

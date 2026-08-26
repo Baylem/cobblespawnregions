@@ -65,6 +65,10 @@ dependencies {
     // Stage 1 output, from mavenLocal(). Replaces the vendored
     // libs/everlastingutils-1.1.6.jar, which was Yarn-era and single-loader.
     modCompileOnly("com.everlastingutils:everlastingutils-fabric:${providers.gradleProperty("everlastingutils_version").get()}")
+
+    // common/ is compiled against Mojmap vanilla, which is exactly this
+    // project's "named" namespace, so remapJar can remap it afterwards.
+    compileOnly(project(":common"))
 }
 
 tasks.processResources {
@@ -100,6 +104,10 @@ java {
 
 tasks.jar {
     inputs.property("archivesName", modArchivesName)
+
+    // Bundle common/ into the loader jar so Loom remaps it with everything
+    // else. Without this the mod ships without 95% of its own code.
+    from(project(":common").sourceSets.main.get().output)
 
     // LICENSE stays at the repo root, but this script now lives in fabric/, so
     // a relative "LICENSE" would resolve to fabric/LICENSE and silently package

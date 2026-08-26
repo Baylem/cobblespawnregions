@@ -1,5 +1,6 @@
 package com.cobblespawnregions.utils
 
+import com.cobblespawnregions.platform.Platform
 import com.cobblespawnregions.CobbleSpawnRegions
 import com.cobblespawnregions.StickMode
 import net.minecraft.world.level.block.state.BlockState
@@ -171,7 +172,7 @@ object RegionParticleUtils {
                 val entity = Display.BlockDisplay(EntityType.BLOCK_DISPLAY, player.level() as ServerLevel)
                 entity.setPos(state.basePos)
                 applyTransformation(entity, req, state.basePos)
-                entity.setBlockState(req.state)
+                Platform.INSTANCE.setDisplayBlockState(entity, req.state)
 
                 state.entities.add(entity)
 
@@ -197,7 +198,7 @@ object RegionParticleUtils {
             state.entities.forEachIndexed { i, entity ->
                 val req = requests[i]
                 applyTransformation(entity, req, state.basePos)
-                entity.setBlockState(req.state)
+                Platform.INSTANCE.setDisplayBlockState(entity, req.state)
                 val entries = entity.entityData.packDirty()
                 if (entries != null) {
                     player.connection.send(ClientboundSetEntityDataPacket(entity.id, entries))
@@ -218,9 +219,7 @@ object RegionParticleUtils {
         val transform = Transformation(
             Matrix4f().translate(offsetX, offsetY, offsetZ).scale(scaleX, scaleY, scaleZ)
         )
-        entity.setTransformation(transform)
-        entity.setTransformationInterpolationDuration(3)
-        entity.setTransformationInterpolationDelay(0)
+        Platform.INSTANCE.setDisplayTransformation(entity, transform, 3, 0)
     }
 
 

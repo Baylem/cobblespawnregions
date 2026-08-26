@@ -11,16 +11,11 @@ import com.cobblespawnregions.utils.RegionSpawnHelper
 import com.cobblespawnregions.utils.RegionWanderingGoalManager
 import com.cobblespawnregions.utils.RegionsConfig
 import com.cobblespawnregions.utils.SpawnPointScanner
+import com.cobblespawnregions.platform.Platform
 import com.cobblespawnregions.utils.SpawnPointStore
 import com.everlastingutils.command.CommandManager
 import com.everlastingutils.scheduling.SchedulerManager
 import com.everlastingutils.utils.logDebug
-import net.fabricmc.api.ModInitializer
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
-import net.fabricmc.fabric.api.event.player.AttackBlockCallback
-import net.fabricmc.fabric.api.event.player.UseBlockCallback
 import net.minecraft.core.component.DataComponents
 import net.minecraft.world.entity.Entity
 import net.minecraft.resources.ResourceKey
@@ -54,7 +49,7 @@ data class PlayerSelection(
     val isBothSet  get() = hasFirst && hasSecond
 }
 
-object CobbleSpawnRegions : ModInitializer {
+object CobbleSpawnRegions {
 
     private val logger = LoggerFactory.getLogger("cobblespawnregions")
     const val MOD_ID = "cobblespawnregions"
@@ -70,7 +65,7 @@ object CobbleSpawnRegions : ModInitializer {
     @Volatile private var nextSpawnLoopCheckAtMs = 0L
     private val dimensionKeyCache = ConcurrentHashMap<String, ResourceKey<Level>>()
 
-    override fun onInitialize() {
+    fun init() {
         RegionsConfig.initializeAndLoad()
         RegionsConfig.debugLog(logger, "Initializing CobbleSpawnRegions")
         RegionEntityTracker.loadFromDisk()
@@ -79,11 +74,11 @@ object CobbleSpawnRegions : ModInitializer {
         battleTracker.registerEvents()
         catchingTracker.registerEvents()
 
-        ServerLifecycleEvents.SERVER_STARTING.register { server ->
+        Platform.INSTANCE.onServerStarting { server ->
             SchedulerManager.onServerStarting(server)
         }
 
-        ServerLifecycleEvents.SERVER_STARTED.register { server ->
+        Platform.INSTANCE.onServerStarted { server ->
             serverReady = true
             automaticSpawningReady = false
             SpawnPointScanner.enqueueAllLoadedChunks(server)
@@ -148,7 +143,7 @@ object CobbleSpawnRegions : ModInitializer {
             battleTracker.startCleanupScheduler(server)
         }
 
-        ServerLifecycleEvents.SERVER_STOPPING.register { server ->
+        Platform.INSTANCE.onServerStopping { server ->
             serverReady = false
             automaticSpawningReady = false
             SpawnPointScanner.clearQueue()
@@ -173,9 +168,8 @@ object CobbleSpawnRegions : ModInitializer {
             SchedulerManager.onServerStopping(server)
         }
 
-        ServerChunkEvents.CHUNK_LOAD.register { world, chunk ->
-            if (!serverReady) return@register
-            if (world !is ServerLevel) return@register
+        Platform.INSTANCE.onChunkLoad { world, chunk ->
+            if (!serverReady) return@onChunkLoad
 
             val dim      = world.dimension().location().toString()
             val chunkPos = chunk.pos
@@ -203,23 +197,22 @@ object CobbleSpawnRegions : ModInitializer {
             }
         }
 
-        ServerChunkEvents.CHUNK_UNLOAD.register { world, chunk ->
-            if (!serverReady) return@register
-            if (world !is ServerLevel) return@register
+        Platform.INSTANCE.onChunkUnload { world, chunk ->
+            if (!serverReady) return@onChunkUnload
             RegionEntityTracker.markChunkUnloading(world, chunk.pos)
         }
 
 
 
 
-        ServerEntityEvents.ENTITY_LOAD.register { entity, _ ->
+        Platform.INSTANCE.onEntityLoad { entity, _ ->
             if (entity is PokemonEntity && RegionEntityTracker.isManaged(entity)) {
                 RegionEntityTracker.trackLoadedEntity(entity)
             }
         }
 
-        ServerEntityEvents.ENTITY_UNLOAD.register { entity, _ ->
-            if (entity !is PokemonEntity) return@register
+        Platform.INSTANCE.onEntityUnload { entity, _ ->
+            if (entity !is PokemonEntity) return@onEntityUnload
             RegionWanderingGoalManager.forget(entity.uuid)
             val chunkIsUnloading = RegionEntityTracker.isChunkUnloading(entity)
             val reason = entity.removalReason
@@ -227,9 +220,9 @@ object CobbleSpawnRegions : ModInitializer {
                 RegionEntityTracker.forgetLiveUuid(entity.uuid)
 
 
-                return@register
+                return@onEntityUnload
             }
-            if (reason == null) return@register
+            if (reason == null) return@onEntityUnload
             when (reason) {
                 Entity.RemovalReason.UNLOADED_TO_CHUNK,
                 Entity.RemovalReason.UNLOADED_WITH_PLAYER -> {
@@ -364,11 +357,10 @@ object CobbleSpawnRegions : ModInitializer {
 
     private fun registerInteractionEvents() {
 
-        AttackBlockCallback.EVENT.register { player, world, hand, pos, _ ->
-            if (world.isClientSide || hand != InteractionHand.MAIN_HAND) return@register InteractionResult.PASS
-            if (player !is ServerPlayer) return@register InteractionResult.PASS
-            val mode = getStickMode(player) ?: return@register InteractionResult.PASS
-            if (!hasClaimStickPermission(player)) return@register InteractionResult.SUCCESS
+        Platform.INSTANCE.onLeftClickBlock { player, world, hand, pos ->
+            if (hand != InteractionHand.MAIN_HAND) return@onLeftClickBlock false
+            val mode = getStickMode(player) ?: return@onLeftClickBlock false
+            if (!hasClaimStickPermission(player)) return@onLeftClickBlock true
 
             val sel = freshOrExisting(player.uuid, mode)
 
@@ -391,17 +383,14 @@ object CobbleSpawnRegions : ModInitializer {
             logDebug("${player.name.string} [${mode.name}] first point = $pos", MOD_ID)
             requestParticleUpdate(player.uuid)
             sendStatus(player, sel)
-            InteractionResult.SUCCESS
-        }
+            true        }
 
-        UseBlockCallback.EVENT.register { player, world, hand, hitResult ->
-            if (world.isClientSide || hand != InteractionHand.MAIN_HAND) return@register InteractionResult.PASS
-            if (player !is ServerPlayer) return@register InteractionResult.PASS
-            val mode = getStickMode(player) ?: return@register InteractionResult.PASS
-            if (!hasClaimStickPermission(player)) return@register InteractionResult.SUCCESS
+        Platform.INSTANCE.onRightClickBlock { player, world, hand, pos ->
+            if (hand != InteractionHand.MAIN_HAND) return@onRightClickBlock false
+            val mode = getStickMode(player) ?: return@onRightClickBlock false
+            if (!hasClaimStickPermission(player)) return@onRightClickBlock true
 
-            val pos = hitResult.blockPos
-            val sel = freshOrExisting(player.uuid, mode)
+                        val sel = freshOrExisting(player.uuid, mode)
 
             when (mode) {
                 StickMode.CHUNK -> {
@@ -422,8 +411,7 @@ object CobbleSpawnRegions : ModInitializer {
             logDebug("${player.name.string} [${mode.name}] second point = $pos", MOD_ID)
             requestParticleUpdate(player.uuid)
             sendStatus(player, sel)
-            InteractionResult.SUCCESS
-        }
+            true        }
     }
 
     private fun hasClaimStickPermission(player: ServerPlayer): Boolean {
