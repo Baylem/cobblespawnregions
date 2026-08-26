@@ -1,0 +1,139 @@
+﻿package com.cobblespawnregions.gui
+
+import com.cobblespawnregions.CobbleSpawnRegions
+import com.cobblespawnregions.utils.RegionData
+import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.SpawnPointStore
+import com.everlastingutils.gui.CustomGui
+import com.everlastingutils.gui.InteractionContext
+import com.everlastingutils.gui.setCustomName
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.network.chat.Component
+import net.minecraft.ChatFormatting
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+object RegionDeleteGui {
+
+    private val confirming = ConcurrentHashMap<UUID, String>()
+
+    private object Slots {
+        const val SUMMARY = 13
+        const val DELETE = 31
+        const val BACK = 49
+    }
+
+    private object Textures {
+        const val REGION = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNjlhMjhiYTNiYTc5YmUxOTU0NzEwZDRkYjJhM2ZkMjI3NzNmNjE5ZjE4ZmVjZjU5ODIzNTNmYjdhYzE4MzkzYSJ9fX0="
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+    }
+
+    fun open(player: ServerPlayer, regionId: String, returnPage: Int = 0) {
+        val region = RegionsConfig.getRegion(regionId) ?: run {
+            player.displayClientMessage(Component.literal("§c[CSR] Region '$regionId' not found."), false)
+            RegionListGui.open(player, returnPage)
+            return
+        }
+
+        CustomGui.openGui(
+            player,
+            "Delete Region - ${region.regionName}",
+            buildLayout(player, regionId),
+            { ctx -> handleClick(ctx, player, regionId, returnPage) },
+            { confirming.remove(player.uuid, regionId) }
+        )
+    }
+
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayer, regionId: String, returnPage: Int) {
+        when (ctx.slotIndex) {
+            Slots.DELETE -> handleDelete(player, regionId, returnPage)
+            Slots.BACK -> {
+                confirming.remove(player.uuid, regionId)
+                RegionListGui.open(player, returnPage)
+            }
+        }
+    }
+
+    private fun handleDelete(player: ServerPlayer, regionId: String, returnPage: Int) {
+        val region = RegionsConfig.getRegion(regionId) ?: run {
+            confirming.remove(player.uuid, regionId)
+            RegionListGui.open(player, returnPage)
+            return
+        }
+
+        if (confirming[player.uuid] != regionId) {
+            confirming[player.uuid] = regionId
+            CustomGui.refreshGui(player, buildLayout(player, regionId))
+            return
+        }
+
+        confirming.remove(player.uuid, regionId)
+        if (RegionsConfig.removeRegion(regionId)) {
+            val affectedPlayers = mutableListOf<java.util.UUID>()
+            CobbleSpawnRegions.activeVisualizations.entries.removeIf { entry ->
+                if (entry.value.remove(regionId)) affectedPlayers.add(entry.key)
+                entry.value.isEmpty()
+            }
+            affectedPlayers.forEach(CobbleSpawnRegions::requestParticleUpdate)
+            SpawnPointStore.clearRegion(regionId)
+            player.displayClientMessage(Component.literal("§a[CSR] §fDeleted region §e${region.regionName}§f."), false)
+        } else {
+            player.displayClientMessage(Component.literal("§c[CSR] Region '$regionId' was already deleted."), false)
+        }
+        RegionListGui.open(player, returnPage)
+    }
+
+    private fun buildLayout(player: ServerPlayer, regionId: String): List<ItemStack> {
+        val layout = MutableList(54) { filler() }
+        val region = RegionsConfig.getRegion(regionId)
+
+        if (region != null) {
+            layout[Slots.SUMMARY] = CustomGui.createPlayerHeadButton(
+                "delete_region_${region.regionId}",
+                Component.literal(region.regionName).withStyle(ChatFormatting.YELLOW),
+                listOf(
+                    Component.literal("§8${region.regionId}"),
+                    Component.literal("§7Mode: §f${region.mode}"),
+                    Component.literal("§7Dimension: §f${region.dimension}"),
+                    Component.literal(boundsLine(region)),
+                    Component.literal("§7Priority: §f${region.priority}"),
+                    Component.literal("§7Custom Spawns: §f${region.selectedPokemon.size}")
+                ),
+                Textures.REGION
+            )
+        }
+
+        layout[Slots.DELETE] = deleteBtn(confirming[player.uuid] == regionId)
+        layout[Slots.BACK] = backBtn()
+        return layout
+    }
+
+    private fun deleteBtn(isConfirming: Boolean): ItemStack {
+        val label = if (isConfirming) "Click Again to Confirm" else "Delete Region"
+        val lore = if (isConfirming) {
+            listOf("§cThis cannot be undone.", "§eClick again §7to permanently delete.")
+        } else {
+            listOf("§7Removes the region config and cached spawn points.", "§eClick §7to arm deletion.")
+        }
+
+        return ItemStack(if (isConfirming) Items.REDSTONE_BLOCK else Items.BARRIER).apply {
+            setCustomName(Component.literal(label).withStyle(ChatFormatting.RED))
+            CustomGui.setItemLore(this, lore)
+        }
+    }
+
+    private fun backBtn() = CustomGui.createPlayerHeadButton(
+        "Back",
+        Component.literal("Back").withStyle(ChatFormatting.GREEN),
+        listOf(Component.literal("§7Return to region list")),
+        Textures.BACK
+    )
+
+    private fun boundsLine(region: RegionData): String =
+        "§7Bounds: §f(${region.pos1.x}, ${region.pos1.y}, ${region.pos1.z}) -> " +
+                "(${region.pos2.x}, ${region.pos2.y}, ${region.pos2.z})"
+
+    private fun filler() = ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply { setCustomName(Component.literal(" ")) }
+}

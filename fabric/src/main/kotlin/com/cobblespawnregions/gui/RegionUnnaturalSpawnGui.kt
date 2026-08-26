@@ -1,0 +1,246 @@
+﻿package com.cobblespawnregions.gui
+
+import com.cobblespawnregions.utils.RegionsConfig
+import com.everlastingutils.gui.CustomGui
+import com.everlastingutils.gui.InteractionContext
+import com.everlastingutils.gui.setCustomName
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.network.chat.Component
+import net.minecraft.world.inventory.ClickAction
+import net.minecraft.ChatFormatting
+
+
+
+
+object RegionUnnaturalSpawnGui {
+
+    private object Slots {
+        const val POKEMON = 19
+        const val TIMER = 21
+        const val AMOUNT = 23
+        const val MAX_TOTAL = 25
+        const val REQUIRE_PLAYER = 30
+        const val PLAYER_RANGE = 32
+        const val BACK = 49
+    }
+
+    private object Limits {
+        const val MIN_TICKS = 20L
+        const val MAX_TICKS = 72_000L
+        const val MIN_TOTAL = 0
+        const val MAX_TOTAL = 500
+        const val MIN_AMOUNT = 1
+        const val MAX_AMOUNT = 100
+        const val MIN_RANGE = 0.0
+        const val MAX_RANGE = 512.0
+    }
+
+    private object Textures {
+        const val MON = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOGQ4YjUxZGM5NTljMzNjMjUxNWJhZDY1ODk5N2Y2Y2VlOWY4NmRmMGU3ODdiNmM2ZjhkNTA3MDY0N2JkYyJ9fX0="
+        const val TIME = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWI1ZWU0MTlhZDljMDYwYzE2Y2I1M2IxZGNmZmFjOGJhY2EwYjJhMjI2NWIxYjZjN2U4ZTc4MGMzN2IxMDRjMCJ9fX0="
+        const val SPAWN_AMOUNT = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvODg5ZWUwYjdmZWY5NTdlZDliNDY0NzU2ZTllNTYxNTQ2OGE5YzQwYzZjMGIxM2Y0NTFmMzNiNDEwMzg5MWVhYiJ9fX0="
+        const val MAX_TOTAL = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZWFlMzc0ZWE3MzJiMjE3M2UyMDk5Mzc3Nzk1MDVkNjJiM2FlOWY5ZDFhNjg1MDllNjk2NjBiNWQ4YTQ0OTNiNCJ9fX0="
+        const val PLAYER_RANGE = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNmIyMWY3ODZjOWNjMmU4MzRhYTY3OTc5NWNhNmI0ZGJlYzQ3ZDM3MWQ3MjgwMDFmOTkzNTU4MDZiZWZhMWRmMiJ9fX0="
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+    }
+
+    fun open(player: ServerPlayer, regionId: String) {
+        val region = RegionsConfig.getRegion(regionId) ?: run {
+            player.displayClientMessage(Component.literal("§c[CSR] §fRegion not found."), false)
+            return
+        }
+        CustomGui.openGui(
+            player,
+            "Custom Spawns - ${region.regionName}",
+            buildLayout(regionId),
+            { ctx -> handleClick(ctx, player, regionId) },
+            {}
+        )
+    }
+
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayer, regionId: String) {
+        when (ctx.slotIndex) {
+            Slots.POKEMON -> RegionPokemonSelectionGui.open(player, regionId)
+            Slots.TIMER -> adjustTimer(player, regionId, ctx.clickType)
+            Slots.AMOUNT -> adjustAmount(player, regionId, ctx.clickType)
+            Slots.MAX_TOTAL -> adjustMaxTotal(player, regionId, ctx.clickType)
+            Slots.REQUIRE_PLAYER -> toggleRequirePlayer(player, regionId)
+            Slots.PLAYER_RANGE -> adjustPlayerRange(player, regionId, ctx.clickType)
+            Slots.BACK -> RegionEditorGui.open(player, regionId)
+        }
+    }
+
+    private fun buildLayout(regionId: String): List<ItemStack> {
+        val layout = MutableList(54) { filler() }
+        val region = RegionsConfig.getRegion(regionId) ?: return layout
+
+        for (i in 0..8) layout[i] = glass()
+
+        layout[Slots.POKEMON] = pokemonItem(region.selectedPokemon.size)
+        layout[Slots.TIMER] = timerItem(region.spawnTimerTicks)
+        layout[Slots.AMOUNT] = amountItem(region.spawnAmountPerSpawn)
+        layout[Slots.MAX_TOTAL] = maxTotalItem(region.maxTotalSpawns)
+        layout[Slots.REQUIRE_PLAYER] = requirePlayerItem(region.requirePlayerInRange)
+        layout[Slots.PLAYER_RANGE] = playerRangeItem(region.playerActivationRange)
+        layout[Slots.BACK] = backBtn()
+        return layout
+    }
+
+    private fun refresh(player: ServerPlayer, regionId: String) {
+        CustomGui.refreshGui(player, buildLayout(regionId))
+    }
+
+    private fun refreshSlot(player: ServerPlayer, regionId: String, slot: Int) {
+        val region = RegionsConfig.getRegion(regionId) ?: return
+        val item = when (slot) {
+            Slots.TIMER -> timerItem(region.spawnTimerTicks)
+            Slots.AMOUNT -> amountItem(region.spawnAmountPerSpawn)
+            Slots.MAX_TOTAL -> maxTotalItem(region.maxTotalSpawns)
+            Slots.REQUIRE_PLAYER -> requirePlayerItem(region.requirePlayerInRange)
+            Slots.PLAYER_RANGE -> playerRangeItem(region.playerActivationRange)
+            else -> return
+        }
+        player.refreshGuiSlots(slot to item)
+    }
+
+    private fun adjustTimer(player: ServerPlayer, regionId: String, clickType: ClickAction) {
+        val delta = when (clickType) {
+            ClickAction.SECONDARY -> -20L
+            else -> 20L
+        }
+        RegionsConfig.updateRegion(regionId) {
+            it.spawnTimerTicks = (it.spawnTimerTicks + delta).coerceIn(Limits.MIN_TICKS, Limits.MAX_TICKS)
+        }
+        refreshSlot(player, regionId, Slots.TIMER)
+    }
+
+    private fun adjustMaxTotal(player: ServerPlayer, regionId: String, clickType: ClickAction) {
+        val delta = when (clickType) {
+            ClickAction.SECONDARY -> -1
+            else -> 1
+        }
+        RegionsConfig.updateRegion(regionId) {
+            it.maxTotalSpawns = (it.maxTotalSpawns + delta).coerceIn(Limits.MIN_TOTAL, Limits.MAX_TOTAL)
+        }
+        refreshSlot(player, regionId, Slots.MAX_TOTAL)
+    }
+
+    private fun adjustAmount(player: ServerPlayer, regionId: String, clickType: ClickAction) {
+        val delta = if (clickType == ClickAction.SECONDARY) -1 else 1
+        RegionsConfig.updateRegion(regionId) {
+            it.spawnAmountPerSpawn = (it.spawnAmountPerSpawn + delta).coerceIn(Limits.MIN_AMOUNT, Limits.MAX_AMOUNT)
+        }
+        refreshSlot(player, regionId, Slots.AMOUNT)
+    }
+
+    private fun toggleRequirePlayer(player: ServerPlayer, regionId: String) {
+        RegionsConfig.updateRegion(regionId) {
+            it.requirePlayerInRange = !it.requirePlayerInRange
+        }
+        refreshSlot(player, regionId, Slots.REQUIRE_PLAYER)
+    }
+
+    private fun adjustPlayerRange(player: ServerPlayer, regionId: String, clickType: ClickAction) {
+        val delta = if (clickType == ClickAction.SECONDARY) -8.0 else 8.0
+        RegionsConfig.updateRegion(regionId) {
+            it.playerActivationRange = (it.playerActivationRange + delta).coerceIn(Limits.MIN_RANGE, Limits.MAX_RANGE)
+        }
+        refreshSlot(player, regionId, Slots.PLAYER_RANGE)
+    }
+
+    private fun pokemonItem(count: Int) = CustomGui.createPlayerHeadButton(
+        "SelectPokemon",
+        Component.literal("Configured Pokemon").withStyle(ChatFormatting.LIGHT_PURPLE),
+        listOf(
+            Component.literal("\u00A77Pokemon this region spawns"),
+            Component.literal("\u00A77where it controls the position."),
+            Component.literal(""),
+            Component.literal("\u00A77Configured: \u00A7f$count"),
+            Component.literal(""),
+            Component.literal("\u00A7eClick \u00A77to manage")
+        ),
+        Textures.MON
+    )
+
+    private fun timerItem(ticks: Long) = CustomGui.createPlayerHeadButton(
+        "SpawnTimer",
+        Component.literal("Spawn Timer").withStyle(ChatFormatting.YELLOW),
+        listOf(
+            Component.literal("\u00A77Custom spawn interval."),
+            Component.literal(""),
+            Component.literal("\u00A7eCurrent: \u00A7f$ticks ticks \u00A78(${ticks / 20.0}s)"),
+            Component.literal("\u00A77Left-click: \u00A7a+20 ticks"),
+            Component.literal("\u00A77Right-click: \u00A7c-20 ticks")
+        ),
+        Textures.TIME
+    )
+
+    private fun maxTotalItem(total: Int) = CustomGui.createPlayerHeadButton(
+        "MaxTotalSpawns",
+        Component.literal("Max Total Spawns").withStyle(ChatFormatting.AQUA),
+        listOf(
+            Component.literal("\u00A77Max custom-spawned Pokemon alive."),
+            Component.literal(""),
+            Component.literal("\u00A7eCurrent: \u00A7f$total \u00A78(0 = unlimited)"),
+            Component.literal("\u00A77Left-click: \u00A7a+1"),
+            Component.literal("\u00A77Right-click: \u00A7c-1")
+        ),
+        Textures.SPAWN_AMOUNT
+    )
+
+    private fun amountItem(amount: Int) = CustomGui.createPlayerHeadButton(
+        "SpawnAmount",
+        Component.literal("Spawn Amount").withStyle(ChatFormatting.GREEN),
+        listOf(
+            Component.literal("\u00A77Pokemon attempted each timer cycle."),
+            Component.literal(""),
+            Component.literal("\u00A7eCurrent: \u00A7f$amount"),
+            Component.literal("\u00A77Left-click: \u00A7a+1"),
+            Component.literal("\u00A77Right-click: \u00A7c-1")
+        ),
+        Textures.MAX_TOTAL
+    )
+
+    private fun requirePlayerItem(enabled: Boolean): ItemStack {
+        return ItemStack(if (enabled) Items.LIME_CONCRETE else Items.RED_CONCRETE).apply {
+            setCustomName(
+                Component.literal("Require Player Nearby: ").withStyle(ChatFormatting.WHITE)
+                    .append(
+                        if (enabled) Component.literal("ON").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD)
+                        else Component.literal("OFF").withStyle(ChatFormatting.RED, ChatFormatting.BOLD)
+                    )
+            )
+            CustomGui.setItemLore(this, listOf(
+                "\u00A77When ON, custom spawning pauses",
+                "\u00A77unless a player is near this region.",
+                "",
+                "\u00A7eClick \u00A77to toggle"
+            ))
+        }
+    }
+
+    private fun playerRangeItem(range: Double) = CustomGui.createPlayerHeadButton(
+        "PlayerActivationRange",
+        Component.literal("Player Range").withStyle(ChatFormatting.YELLOW),
+        listOf(
+            Component.literal("\u00A77Range around the region bounds."),
+            Component.literal(""),
+            Component.literal("\u00A7eCurrent: \u00A7f${range.toInt()} blocks"),
+            Component.literal("\u00A77Left-click: \u00A7a+8"),
+            Component.literal("\u00A77Right-click: \u00A7c-8")
+        ),
+        Textures.PLAYER_RANGE
+    )
+
+    private fun backBtn() = CustomGui.createPlayerHeadButton(
+        "Back",
+        Component.literal("Back").withStyle(ChatFormatting.RED),
+        listOf(Component.literal("\u00A77Return to region settings")),
+        Textures.BACK
+    )
+
+    private fun glass() = ItemStack(Items.CYAN_STAINED_GLASS_PANE).apply { setCustomName(Component.literal(" ")) }
+    private fun filler() = ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply { setCustomName(Component.literal(" ")) }
+}

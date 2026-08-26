@@ -1,0 +1,206 @@
+﻿package com.cobblespawnregions.gui
+
+import com.cobblemon.mod.common.api.pokemon.labels.CobblemonPokemonLabels
+import com.cobblespawnregions.utils.RegionRestrictionConfig
+import com.cobblespawnregions.utils.RegionsConfig
+import com.cobblespawnregions.utils.RestrictionTarget
+import com.everlastingutils.gui.CustomGui
+import com.everlastingutils.gui.InteractionContext
+import com.everlastingutils.gui.setCustomName
+import net.minecraft.world.item.ItemStack
+import net.minecraft.world.item.Items
+import net.minecraft.server.level.ServerPlayer
+import net.minecraft.network.chat.Component
+import net.minecraft.ChatFormatting
+import org.slf4j.LoggerFactory
+import java.lang.reflect.Field
+import java.util.concurrent.ConcurrentHashMap
+
+
+
+
+
+
+
+
+object RegionLabelSelectorGui {
+
+    private val logger = LoggerFactory.getLogger("RegionLabelSelectorGui")
+    private const val PAGE_SIZE = 45
+
+    private val playerPages = ConcurrentHashMap<ServerPlayer, Int>()
+
+
+
+
+
+    @Volatile
+    private var cachedLabels: List<String> = emptyList()
+
+
+
+
+
+    fun getAllLabels(): List<String> {
+        if (cachedLabels.isEmpty()) refreshCache()
+        return cachedLabels
+    }
+
+
+
+
+
+
+
+
+    fun refreshCache() {
+        cachedLabels = try {
+            CobblemonPokemonLabels::class.java.declaredFields
+                .filter { it.type == String::class.java }
+                .mapNotNull { field ->
+                    try {
+                        field.isAccessible = true
+                        field.get(CobblemonPokemonLabels) as? String
+                    } catch (e: Exception) {
+                        RegionsConfig.debugError(logger, "Failed to read Cobblemon label field '${field.name}'", e)
+                        null
+                    }
+                }
+                .filter { it.isNotBlank() }
+                .sorted()
+        } catch (e: Exception) {
+            RegionsConfig.debugError(logger, "Failed to refresh Cobblemon label cache", e)
+            emptyList()
+        }
+    }
+
+
+
+    private object Slots {
+        const val PREV = 45
+        const val BACK = 49
+        const val NEXT = 53
+    }
+
+    private object Textures {
+        const val PREV = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTMzYWQ1YzIyZGIxNjQzNWRhYWQ2MTU5MGFiYTUxZDkzNzkxNDJkZDU1NmQ2YzQyMmE3MTEwY2EzYWJlYTUwIn19fQ=="
+        const val NEXT = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOGU0MDNjYzdiYmFjNzM2NzBiZDU0M2Y2YjA5NTViYWU3YjhlOTEyM2Q4M2JkNzYwZjYyMDRjNWFmZDhiZTdlMSJ9fX0="
+        const val BACK = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNzI0MzE5MTFmNDE3OGI0ZDJiNDEzYWE3ZjVjNzhhZTQ0NDdmZTkyNDY5NDNjMzFkZjMxMTYzYzBlMDQzZTBkNiJ9fX0="
+        const val LABEL_ON  = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYmViNTg4YjIxYTZmOThhZDFmZjRlMDg1YzU1MmRjYjA1MGVmYzljYWI0MjdmNDcyNjkwOTYxMjg5N2I5Zjk3In19fQ=="
+        const val LABEL_OFF = "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvZjYyZTBiMjU2Yzg1ZTY2NjFmMzk5YjVjNjE5OWZjNDVmMWYzZDJiZjI0ZTM1N2EyMzI3MWRkMzBhNjczM2E1ZiJ9fX0="
+    }
+
+
+
+    fun open(player: ServerPlayer, regionId: String, page: Int = 0, target: RestrictionTarget = RestrictionTarget.NATURAL_SPAWNS) {
+        playerPages[player] = page
+        val label = RegionsConfig.scopeLabel(regionId)
+
+        CustomGui.openGui(
+            player,
+            "Excluded Labels — $label",
+            buildLayout(player, regionId, target),
+            { ctx -> handleClick(ctx, player, regionId, target) },
+            {}
+        )
+    }
+
+
+
+    private fun handleClick(ctx: InteractionContext, player: ServerPlayer, regionId: String, target: RestrictionTarget) {
+        val restr = RegionsConfig.getRestriction(regionId, target) ?: return
+        val page  = playerPages[player] ?: 0
+        val labels = getAllLabels()
+
+        when (ctx.slotIndex) {
+            Slots.PREV -> if (page > 0) {
+                playerPages[player] = page - 1
+                refresh(player, regionId, target)
+            }
+            Slots.NEXT -> if ((page + 1) * PAGE_SIZE < labels.size) {
+                playerPages[player] = page + 1
+                refresh(player, regionId, target)
+            }
+            Slots.BACK -> RegionNaturalSpawnGui.open(player, regionId, target)
+            in 0 until PAGE_SIZE -> {
+                val idx = page * PAGE_SIZE + ctx.slotIndex
+                if (idx < labels.size) toggleLabel(restr, regionId, labels[idx], player, target)
+            }
+        }
+    }
+
+    private fun toggleLabel(
+        restr: RegionRestrictionConfig,
+        regionId: String,
+        label: String,
+        player: ServerPlayer,
+        target: RestrictionTarget
+    ) {
+        if (label in restr.disallowedLabels) {
+            restr.disallowedLabels.remove(label)
+        } else {
+            restr.disallowedLabels.add(label)
+        }
+        RegionsConfig.saveRegion(regionId)
+        refresh(player, regionId, target)
+    }
+
+    private fun refresh(player: ServerPlayer, regionId: String, target: RestrictionTarget) {
+        CustomGui.refreshGui(player, buildLayout(player, regionId, target))
+    }
+
+
+
+    private fun buildLayout(player: ServerPlayer, regionId: String, target: RestrictionTarget): List<ItemStack> {
+        val layout = MutableList(54) { filler() }
+        val restr  = RegionsConfig.getRestriction(regionId, target) ?: return layout
+        val page   = playerPages[player] ?: 0
+        val labels = getAllLabels()
+        val blocked = restr.disallowedLabels
+
+        val start = minOf(page * PAGE_SIZE, labels.size)
+        val end   = minOf(start + PAGE_SIZE, labels.size)
+
+        for (i in start until end) {
+            val lbl = labels[i]
+            val isBlocked = lbl in blocked
+            layout[i - start] = labelItem(lbl, isBlocked)
+        }
+
+
+        if (page > 0)                                layout[Slots.PREV] = navBtn("Previous Page", Textures.PREV)
+        if ((page + 1) * PAGE_SIZE < labels.size)    layout[Slots.NEXT] = navBtn("Next Page", Textures.NEXT)
+        layout[Slots.BACK] = navBtn("Back to Spawn Settings", Textures.BACK)
+
+        return layout
+    }
+
+
+
+    private fun labelItem(label: String, isExcluded: Boolean): ItemStack {
+        val item = CustomGui.createPlayerHeadButton(
+            "lbl_$label",
+            Component.literal(label).withStyle(if (isExcluded) ChatFormatting.RED else ChatFormatting.GREEN),
+            listOf(
+                Component.literal(""),
+                Component.literal(if (isExcluded) "§c§lEXCLUDED" else "§a§lALLOWED"),
+                Component.literal("§7Click to toggle this label in"),
+                Component.literal("§7disallowedLabels.")
+            ),
+            AlphabetHeadTextures.forFirstLetter(label, if (isExcluded) Textures.LABEL_ON else Textures.LABEL_OFF)
+        )
+        if (isExcluded) CustomGui.addEnchantmentGlint(item)
+        return item
+    }
+
+    private fun navBtn(label: String, texture: String) = CustomGui.createPlayerHeadButton(
+        label.replace(" ", ""),
+        Component.literal(label).withStyle(ChatFormatting.AQUA),
+        emptyList(),
+        texture
+    )
+
+    private fun filler() = ItemStack(Items.GRAY_STAINED_GLASS_PANE).apply {
+        setCustomName(Component.literal(" "))
+    }
+}

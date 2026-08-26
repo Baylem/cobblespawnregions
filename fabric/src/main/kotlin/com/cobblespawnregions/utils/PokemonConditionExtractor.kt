@@ -1,0 +1,312 @@
+package com.cobblespawnregions.utils
+
+import com.cobblemon.mod.common.api.pokemon.PokemonProperties
+import com.cobblemon.mod.common.api.pokemon.PokemonPropertyExtractor
+import com.cobblemon.mod.common.api.riding.RidingStyle
+import com.cobblemon.mod.common.entity.pokemon.PokemonEntity
+import com.cobblemon.mod.common.pokemon.Pokemon
+import net.minecraft.server.level.ServerPlayer
+import org.slf4j.LoggerFactory
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.reflect.KProperty1
+import kotlin.reflect.full.memberProperties
+import kotlin.reflect.jvm.isAccessible
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+object PokemonConditionExtractor {
+
+    private val logger = LoggerFactory.getLogger("PokemonConditionExtractor")
+
+
+    private val speciesConditionCache = ConcurrentHashMap<String, List<String>>()
+
+    /** Makes private Kotlin properties and Java backing fields readable when allowed. */
+    private fun readableProperties(obj: Any): Sequence<KProperty1<out Any, *>> =
+        obj::class.memberProperties.asSequence().onEach { property ->
+            property.isAccessible = true
+            property.getter.isAccessible = true
+        }
+
+
+
+
+
+    private val NAME_PROPERTIES = listOf(
+        "name",
+        "displayName",
+        "resourceIdentifier",
+        "translatedName",
+        "id",
+        "showNameId"
+    )
+
+
+
+
+
+
+
+    fun extractExclusionConditions(pokemon: Pokemon): List<String> {
+        val conditionList = mutableListOf<String>()
+
+
+        val props = PokemonProperties()
+        PokemonPropertyExtractor.ALL.forEach { it(pokemon, props) }
+
+
+        props.type = pokemon.form.types.joinToString(",") { it.name.lowercase(Locale.getDefault()) }
+        conditionList.addAll(extractAllRaw(props))
+
+
+        conditionList.addAll(extractAllRaw(pokemon))
+
+
+        conditionList.addAll(extractAllRaw(pokemon.form))
+
+        // These are separate in Cobblemon: autonomous flight is AI behaviour,
+        // while ridden movement is defined by the form's riding styles/seats.
+        val riding = pokemon.form.riding
+        val ridingStyles = riding.behaviours?.keys ?: emptySet()
+        conditionList.add("canfly=${pokemon.form.behaviour.moving.fly.canFly}")
+        conditionList.add("rideable=${riding.seats.isNotEmpty() && ridingStyles.isNotEmpty()}")
+        conditionList.add("rideair=${RidingStyle.AIR in ridingStyles}")
+        conditionList.add("rideland=${RidingStyle.LAND in ridingStyles}")
+        conditionList.add("rideliquid=${RidingStyle.LIQUID in ridingStyles}")
+        conditionList.add("rideseats=${riding.seats.size}")
+
+
+        try {
+            pokemon.moveSet.getMoves().forEach { move ->
+
+                val moveName = move.template?.name
+                if (!moveName.isNullOrBlank()) {
+                    conditionList.add("move=$moveName")
+                } else {
+
+                    val resolved = resolveObjectName(move)
+                    if (resolved != null) conditionList.add("move=$resolved")
+                }
+            }
+        } catch (e: Exception) {
+            RegionsConfig.debugError(logger, "Failed to extract moveset conditions for ${pokemon.species.name}", e)
+        }
+
+        return conditionList
+            .filter { it.contains("=") || it.contains(":") }
+            .filter { !it.contains("uuid", ignoreCase = true) }
+            .filter { !it.contains("@") }
+            .distinct()
+            .sorted()
+    }
+
+    fun extractAllConditions(pokemon: Pokemon): List<String> = extractExclusionConditions(pokemon)
+
+
+
+
+
+
+
+    fun scanSpeciesForConditions(player: ServerPlayer, speciesName: String): List<String> {
+        speciesConditionCache[speciesName]?.let { return it }
+
+        try {
+            val basePokemon = PokemonProperties.parse(speciesName.lowercase()).create()
+            val world = player.serverLevel()
+            val entity = PokemonEntity(world, basePokemon)
+            entity.setPos(player.position())
+            world.addFreshEntity(entity)
+
+            val conditions = extractExclusionConditions(entity.pokemon)
+            entity.discard()
+
+            speciesConditionCache[speciesName] = conditions
+            return conditions
+
+        } catch (e: Exception) {
+            RegionsConfig.debugError(logger, "Failed to scan species: $speciesName", e)
+            return emptyList()
+        }
+    }
+
+
+
+
+    fun buildPropertyMap(pokemon: Pokemon): Map<String, String> {
+        val properties = PokemonProperties()
+        PokemonPropertyExtractor.ALL.forEach { it(pokemon, properties) }
+        properties.type = pokemon.form.types.joinToString(",") { it.name }
+
+        return buildMap {
+            PokemonProperties::class.memberProperties.forEach { prop ->
+                put(
+                    prop.name.lowercase(Locale.getDefault()),
+                    resolvePropertyValue(prop.get(properties)) ?: ""
+                )
+            }
+        }
+    }
+
+
+    fun clearCache() {
+        speciesConditionCache.clear()
+    }
+
+
+
+
+
+
+
+
+
+    internal fun resolveObjectName(obj: Any?): String? {
+        if (obj == null) return null
+
+
+        if (obj is String) return obj.ifBlank { null }
+
+
+        val str = obj.toString()
+        if (!str.contains("@") && str.isNotBlank()) return str
+
+
+        return tryResolveName(obj)
+    }
+
+
+
+
+    private fun tryResolveName(obj: Any): String? {
+
+        for (propName in NAME_PROPERTIES) {
+            try {
+                val prop = readableProperties(obj).find { it.name.equals(propName, ignoreCase = true) }
+                if (prop != null) {
+                    val value = prop.getter.call(obj)
+                    if (value != null && value is String && value.isNotBlank() && !value.contains("@")) {
+                        return value
+                    }
+
+                    if (value != null && value !is String && value !is Number && value !is Boolean) {
+                        val deep = tryResolveName(value)
+                        if (deep != null) return deep
+                    }
+                }
+            } catch (e: Exception) {
+                RegionsConfig.debugError(logger, "Failed to resolve property '$propName' on ${obj::class.qualifiedName}", e)
+            }
+        }
+
+
+        if (obj is Iterable<*>) {
+            val resolved = obj.mapNotNull { item -> resolveObjectName(item) }
+            if (resolved.isNotEmpty()) return resolved.joinToString(",")
+        }
+
+
+        return try {
+            readableProperties(obj).firstNotNullOfOrNull { prop ->
+                try {
+                    val v = prop.getter.call(obj)
+                    if (v is String && v.isNotBlank() && !v.contains("@") && v.length > 1 && v.length < 100) v
+                    else null
+                } catch (e: Exception) {
+                    RegionsConfig.debugError(logger, "Failed to inspect fallback property '${prop.name}' on ${obj::class.qualifiedName}", e)
+                    null
+                }
+            }
+        } catch (e: Exception) {
+            RegionsConfig.debugError(logger, "Failed to inspect fallback properties on ${obj::class.qualifiedName}", e)
+            null
+        }
+    }
+
+
+
+
+
+    internal fun resolvePropertyValue(value: Any?): String? {
+        if (value == null) return null
+        return resolveObjectName(value)
+    }
+
+
+
+
+
+
+
+
+
+
+    internal fun extractAllRaw(obj: Any): List<String> {
+        val results = mutableListOf<String>()
+        try {
+            readableProperties(obj).forEach { prop ->
+                try {
+                    val value = prop.getter.call(obj)
+                    if (value != null) {
+                        val key = prop.name.lowercase(Locale.getDefault())
+                        when (value) {
+                            is Iterable<*> -> {
+
+                                value.filterNotNull().forEach { item ->
+                                    val resolved = resolveObjectName(item) ?: item.toString()
+                                    if (resolved.isNotBlank() && !resolved.contains("@") && resolved != "[]") {
+                                        results.add("$key=$resolved")
+                                    }
+                                }
+                            }
+                            is Map<*, *> -> {
+                                value.entries.forEach { entry ->
+                                    val k = resolveObjectName(entry.key) ?: entry.key.toString()
+                                    val v = resolveObjectName(entry.value) ?: entry.value.toString()
+                                    if (!k.contains("@") && !v.contains("@")) {
+                                        results.add("$key=$k=$v")
+                                    }
+                                }
+                            }
+                            else -> {
+                                val resolved = resolveObjectName(value)
+                                if (resolved != null && resolved.isNotBlank() && resolved != "[]") {
+                                    results.add("$key=$resolved")
+                                }
+
+                                else {
+                                    val raw = value.toString()
+                                    if (raw.isNotBlank() && raw != "[]" && !raw.contains("@")) {
+                                        results.add("$key=$raw")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    RegionsConfig.debugError(logger, "Failed to extract condition property '${prop.name}' from ${obj::class.qualifiedName}", e)
+                }
+            }
+        } catch (e: Exception) {
+            RegionsConfig.debugError(logger, "Failed to extract raw conditions from ${obj::class.qualifiedName}", e)
+        }
+        return results
+    }
+}
