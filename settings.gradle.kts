@@ -23,3 +23,4 @@ rootProject.name = "cobblespawnregions"
 
 include("common")
 include("fabric")
+include("neoforge")

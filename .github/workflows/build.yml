@@ -1,30 +1,99 @@
-# Automatically build the project and run any configured tests for every push
-# and submitted pull request. This can help catch issues that only occur on
-# certain platforms or Java versions, and provides a first line of defence
-# against bad commits.
+# Builds both loader variants on every push/PR.
+# Pushing a tag like v1.0.7 additionally cuts a draft GitHub Release
+# containing the Fabric and NeoForge jars.
+#
+# Place at: .github/workflows/build.yml
 
 name: build
-on: [pull_request, push]
+
+on:
+  push:
+    branches: [ main, multiloader ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: validate gradle wrapper
+
+      - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
-      - name: setup jdk
+
+      # MC 1.21.1 targets Java 21. Do not bump this to 25 --
+      # ModDevGradle and Loom are both far better tested on 21.
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
-          distribution: 'microsoft'
-      - name: make gradle wrapper executable
-        run: chmod +x ./gradlew
-      - name: build
-        run: ./gradlew build
-      - name: capture build artifacts
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # Tag v1.0.7 -> mod_version 1.0.7. Untagged builds fall back
+      # to whatever gradle.properties says.
+      - name: Derive version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "MOD_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          chmod +x ./gradlew
+          if [ -n "$MOD_VERSION" ]; then
+            ./gradlew build collectJars -Pmod_version="$MOD_VERSION" --stacktrace
+          else
+            ./gradlew build collectJars --stacktrace
+          fi
+
+      - name: Upload jars
         uses: actions/upload-artifact@v4
         with:
-          name: Artifacts
-          path: build/libs/
+          name: jars
+          path: build/release/*.jar
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download jars
+        uses: actions/download-artifact@v4
+        with:
+          name: jars
+          path: jars
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jars/*.jar
+          generate_release_notes: true
+          draft: true
+
+      # Optional: publish to Modrinth and CurseForge in the same step.
+      # Requires MODRINTH_TOKEN / CURSEFORGE_TOKEN repo secrets and the
+      # project IDs filled in. Delete this block if you are not ready.
+      #
+      # - name: Publish to Modrinth + CurseForge
+      #   uses: Kir-Antipov/mc-publish@v3.3
+      #   with:
+      #     modrinth-id: YOUR_MODRINTH_PROJECT_ID
+      #     modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+      #     curseforge-id: YOUR_CURSEFORGE_PROJECT_ID
+      #     curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
+      #     files: jars/*.jar
+      #     loaders: |
+      #       fabric
+      #       neoforge
+      #     game-versions: 1.21.1
+      #     version-type: release
+      #     dependencies: |
+      #       cobblemon(required)
+      #       everlastingutils(required)

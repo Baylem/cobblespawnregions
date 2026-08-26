@@ -1,0 +1,50 @@
+modLoader = "kotlinforforge"
+loaderVersion = "[5,)"
+license = "GNU Lesser General Public License v3"
+issueTrackerURL = "https://github.com/Baylem/cobblespawnregions/issues"
+
+[[mods]]
+modId = "cobblespawnregions"
+version = "${version}"
+displayName = "CobbleSpawnRegions"
+description = "This mod allows you to claim and set regions for cobblemon to spawn"
+authors = "Hysocs"
+logoFile = "assets/cobblespawnregions/icon.png"
+
+[[mixins]]
+config = "cobblespawnregions.mixins.json"
+
+[[dependencies.cobblespawnregions]]
+modId = "neoforge"
+type = "required"
+versionRange = "[21.1,)"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.cobblespawnregions]]
+modId = "minecraft"
+type = "required"
+versionRange = "[1.21.1,1.22)"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.cobblespawnregions]]
+modId = "kotlinforforge"
+type = "required"
+versionRange = "[5,)"
+ordering = "NONE"
+side = "SERVER"
+
+[[dependencies.cobblespawnregions]]
+modId = "cobblemon"
+type = "required"
+versionRange = "[1.7.3,)"
+ordering = "AFTER"
+side = "SERVER"
+
+[[dependencies.cobblespawnregions]]
+modId = "everlastingutils"
+type = "required"
+versionRange = "[1.1.6,)"
+ordering = "AFTER"
+side = "SERVER"

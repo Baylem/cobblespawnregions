@@ -13,7 +13,7 @@ group = providers.gradleProperty("maven_group").get()
 // archivesName the jar would be emitted as fabric-<version>.jar instead of
 // cobblespawnregions-<version>.jar. Pinned here so Stage 0 is a true no-op;
 // Stage 4 changes it to carry the loader name once both jars are produced.
-val modArchivesName = "cobblespawnregions"
+val modArchivesName = "cobblespawnregions-fabric"
 
 base {
     archivesName = modArchivesName
