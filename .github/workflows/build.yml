@@ -86,12 +86,27 @@ jobs:
           name: jars
           path: jars
 
+      # One release per tag, carrying BOTH loader jars. collectJars mirrors
+      # fabric/ and neoforge/ into build/release, the build job uploads them as
+      # a single `jars` artifact, and this attaches all of them to one release.
       - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
+          name: "CobbleSpawnRegions ${{ github.ref_name }}"
           files: jars/*.jar
           generate_release_notes: true
           draft: true
+          fail_on_unmatched_files: true
+          body: |
+            Built from one shared source tree. Both loader jars are attached to
+            this release.
+
+            | Loader | Jar |
+            |---|---|
+            | Fabric | `cobblespawnregions-fabric-<version>.jar` |
+            | NeoForge | `cobblespawnregions-neoforge-<version>.jar` |
+
+            Requires Minecraft 1.21.1 and Java 21.
 
       # Optional: publish to Modrinth and CurseForge in the same step.
       # Requires MODRINTH_TOKEN / CURSEFORGE_TOKEN repo secrets and the
