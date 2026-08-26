@@ -1,8 +1,6 @@
 # Builds both loader variants on every push/PR.
 # Pushing a tag like v1.0.7 additionally cuts a draft GitHub Release
 # containing the Fabric and NeoForge jars.
-#
-# Place at: .github/workflows/build.yml
 
 name: build
 
@@ -26,8 +24,8 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      # MC 1.21.1 targets Java 21. Do not bump this to 25 --
-      # ModDevGradle and Loom are both far better tested on 21.
+      # MC 1.21.1 targets Java 21. Do not bump this -- ModDevGradle and Loom
+      # are both far better exercised on 21.
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -37,8 +35,26 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # Tag v1.0.7 -> mod_version 1.0.7. Untagged builds fall back
-      # to whatever gradle.properties says.
+      # This mod resolves EverlastingUtils from mavenLocal(). EverlastingUtils
+      # lives in a separate repository and is not published to any remote
+      # maven, so a clean runner has nothing to resolve and the build would
+      # fail at dependency resolution. Build and install it first.
+      #
+      # The ref is pinned deliberately: cobblespawnregions/multiloader is only
+      # known to work against everlastingutils/multiloader.
+      - name: Checkout EverlastingUtils
+        uses: actions/checkout@v4
+        with:
+          repository: Baylem/everlastingutils
+          ref: multiloader
+          path: everlastingutils
+
+      - name: Publish EverlastingUtils to mavenLocal
+        run: |
+          chmod +x ./everlastingutils/gradlew
+          ./everlastingutils/gradlew -p everlastingutils publishToMavenLocal --stacktrace
+
+      # Tag v1.0.7 -> mod_version 1.0.7. Untagged builds use gradle.properties.
       - name: Derive version from tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: echo "MOD_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -79,7 +95,8 @@ jobs:
 
       # Optional: publish to Modrinth and CurseForge in the same step.
       # Requires MODRINTH_TOKEN / CURSEFORGE_TOKEN repo secrets and the
-      # project IDs filled in. Delete this block if you are not ready.
+      # project IDs filled in. Note both platforms have re-upload policies
+      # separate from the licence -- see docs/PORTING-PLAN.md.
       #
       # - name: Publish to Modrinth + CurseForge
       #   uses: Kir-Antipov/mc-publish@v3.3
